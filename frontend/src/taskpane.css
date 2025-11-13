@@ -1,0 +1,17 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background-color: var(--surface, #f5f5f5);
+  color: var(--text, #1f1f1f);
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+

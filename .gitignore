@@ -1,0 +1,11 @@
+frontend/node_modules/
+frontend/dist/
+frontend/.parcel-cache/
+backend/app/__pycache__/
+backend/.venv/
+__pycache__/
+*.pyc
+.env
+manifest.md
+Thumbs.db
+.DS_Store
