@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, TypedDict
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
 
@@ -12,7 +14,13 @@ from .providers import (
     available_providers,
     create_provider,
 )
-from .schemas import ChatRequest, ChatResponse
+from .schemas import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    MessageKind,
+    MessageRole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +93,15 @@ class LangGraphOrchestrator:
         provider_id = request.provider.lower()
         started_at = time.time()
         telemetry_payload: Dict[str, Any] = {}
+
+        placeholder = ChatMessage(
+            id=str(uuid4()),
+            role=MessageRole.ASSISTANT,
+            kind=MessageKind.THOUGHT,
+            content="Analyzing your prompt…",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        yield {"type": "message", "payload": placeholder.model_dump(by_alias=True)}
 
         try:
             provider = create_provider(provider_id)

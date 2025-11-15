@@ -34,6 +34,9 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 
+STREAM_MESSAGE_DELAY_SECONDS = 0.35
+
+
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -68,18 +71,21 @@ class ProviderStreamEvent(TypedDict, total=False):
 
 
 async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStreamEvent]:
-    for message in result.messages:
+    for index, message in enumerate(result.messages):
+        if index > 0:
+            await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {
             "type": "message",
             "payload": message.model_dump(by_alias=True),
         }
-        await asyncio.sleep(0)
     if result.cell_updates:
+        await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {
             "type": "cell_updates",
             "payload": [item.model_dump(by_alias=True) for item in result.cell_updates],
         }
     if result.format_updates:
+        await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {
             "type": "format_updates",
             "payload": [
@@ -87,6 +93,7 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
             ],
         }
     if result.telemetry:
+        await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {
             "type": "telemetry",
             "payload": result.telemetry.model_dump(by_alias=True),
@@ -203,8 +210,6 @@ class MockProvider:
     async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         result = await self.generate(request)
         async for event in _stream_result(result):
-            if event.get("type") == "message":
-                await asyncio.sleep(0.05)
             yield event
 
 
