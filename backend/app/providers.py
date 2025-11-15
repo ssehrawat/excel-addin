@@ -56,6 +56,13 @@ def _ensure_iterable(value: Any) -> Iterable[Any]:
     return [value]
 
 
+def _is_response_format_error(error: Exception) -> bool:
+    text = str(error).lower()
+    if "response_format" not in text:
+        return False
+    return any(keyword in text for keyword in ["not supported", "unsupported", "only available"])
+
+
 @dataclass
 class ProviderResult:
     messages: List[ChatMessage]
@@ -260,14 +267,26 @@ class OpenAIProvider:
                 status_code=500,
                 detail="langchain-openai is not installed on the server.",
             ) from exc
+
+        self._settings = settings
+        self._json_mode_enabled = True
+        self._client = self._instantiate_openai_client(json_mode=True)
+
+    def _instantiate_openai_client(self, json_mode: bool):  # type: ignore[return-type]
+        from langchain_openai import ChatOpenAI  # type: ignore
+
         client_kwargs = {
             "model": self.model,
             "api_key": self.api_key,
-            "timeout": settings.request_timeout_seconds,
+            "timeout": self._settings.request_timeout_seconds,
         }
         if self.temperature is not None:
             client_kwargs["temperature"] = self.temperature
-        self._client = ChatOpenAI(**client_kwargs)
+        if json_mode:
+            client_kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+        client = ChatOpenAI(**client_kwargs)
+        self._json_mode_enabled = json_mode
+        return client
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         system_prompt = (
@@ -282,7 +301,8 @@ class OpenAIProvider:
             "wrap single rows like [['Header'], [123]]). "
             "Only use modes 'replace' or 'append'. Provide cell updates whenever data in Excel should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields such as "
-            "`fill_color`, `font_color`, `bold`, `italic`."
+            "`fill_color`, `font_color`, `bold`, `italic`. "
+            "Return strictly valid JSON with fully expanded arrays—never include formulas, code, or list comprehensions."
         )
 
         messages = [
@@ -293,7 +313,18 @@ class OpenAIProvider:
             },
         ]
 
-        result = await asyncio.to_thread(self._client.invoke, messages)
+        try:
+            result = await asyncio.to_thread(self._client.invoke, messages)
+        except Exception as exc:
+            if self._json_mode_enabled and _is_response_format_error(exc):
+                logger.warning(
+                    "OpenAI model '%s' does not support JSON mode. Falling back to lax parsing.",
+                    self.model,
+                )
+                self._client = self._instantiate_openai_client(json_mode=False)
+                result = await asyncio.to_thread(self._client.invoke, messages)
+            else:
+                raise
 
         parsed = parse_structured_response(result.content)
         provider_messages = assemble_messages_from_payload(parsed, request.prompt)
@@ -342,14 +373,28 @@ class AnthropicProvider:
                 status_code=500,
                 detail="langchain-anthropic is not installed on the server.",
             ) from exc
+
+        self._settings = settings
+        self._json_mode_enabled = True
+        self._client = self._instantiate_anthropic_client(json_mode=True)
+
+    def _instantiate_anthropic_client(self, json_mode: bool):  # type: ignore[return-type]
+        from langchain_anthropic import ChatAnthropic  # type: ignore
+
         client_kwargs = {
             "model": self.model,
             "anthropic_api_key": self.api_key,
-            "timeout": settings.request_timeout_seconds,
+            "timeout": self._settings.request_timeout_seconds,
         }
         if self.temperature is not None:
             client_kwargs["temperature"] = self.temperature
-        self._client = ChatAnthropic(**client_kwargs)
+        if json_mode:
+            client_kwargs.setdefault("model_kwargs", {})["response_format"] = {
+                "type": "json_object"
+            }
+        client = ChatAnthropic(**client_kwargs)
+        self._json_mode_enabled = json_mode
+        return client
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         system_prompt = (
@@ -361,7 +406,8 @@ class AnthropicProvider:
             "[['Header'], [123]]). "
             "Only use modes 'replace' or 'append'. Provide cell updates whenever the workbook should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields "
-            "like `fill_color`, `font_color`, `bold`, `italic`."
+            "like `fill_color`, `font_color`, `bold`, `italic`. "
+            "Return strictly valid JSON with fully enumerated arrays—no formulas, code, or list comprehensions."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -371,7 +417,18 @@ class AnthropicProvider:
             },
         ]
 
-        result = await asyncio.to_thread(self._client.invoke, messages)
+        try:
+            result = await asyncio.to_thread(self._client.invoke, messages)
+        except Exception as exc:
+            if self._json_mode_enabled and _is_response_format_error(exc):
+                logger.warning(
+                    "Anthropic model '%s' does not support JSON mode. Falling back to lax parsing.",
+                    self.model,
+                )
+                self._client = self._instantiate_anthropic_client(json_mode=False)
+                result = await asyncio.to_thread(self._client.invoke, messages)
+            else:
+                raise
 
         parsed = parse_structured_response(result.content)
         provider_messages = assemble_messages_from_payload(parsed, request.prompt)
