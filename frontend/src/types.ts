@@ -42,6 +42,20 @@ export interface FormatUpdate {
   borderWeight?: string | null;
 }
 
+export type ChartSeriesBy = "auto" | "rows" | "columns";
+
+export interface ChartInsert {
+  chartType: string;
+  sourceAddress: string;
+  sourceWorksheet?: string | null;
+  destinationWorksheet?: string | null;
+  name?: string | null;
+  title?: string | null;
+  topLeftCell?: string | null;
+  bottomRightCell?: string | null;
+  seriesBy?: ChartSeriesBy;
+}
+
 export interface ChatRequest {
   prompt: string;
   provider: string;
@@ -54,6 +68,7 @@ export interface ChatResponse {
   messages: ChatMessage[];
   cell_updates?: CellUpdate[];
   format_updates?: FormatUpdate[];
+  chart_inserts?: ChartInsert[];
   telemetry?: Telemetry | null;
 }
 
@@ -80,6 +95,7 @@ export type ChatStreamEvent =
   | { type: "message"; payload: ChatMessage }
   | { type: "cell_updates"; payload: CellUpdate[] }
   | { type: "format_updates"; payload: FormatUpdate[] }
+  | { type: "chart_inserts"; payload: ChartInsert[] }
   | { type: "telemetry"; payload: Telemetry | null }
   | { type: "done"; payload?: null }
   | { type: "error"; payload: { message: string } };

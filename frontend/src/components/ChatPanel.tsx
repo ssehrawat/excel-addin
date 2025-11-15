@@ -77,6 +77,7 @@ const useStyles = makeStyles({
 interface ChatPanelProps {
   messages: ChatMessage[];
   isBusy: boolean;
+  // eslint-disable-next-line no-unused-vars
   onSend: (text: string) => Promise<void>;
   onOpenSettings: () => void;
 }

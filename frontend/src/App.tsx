@@ -1,3 +1,5 @@
+/* global Office */
+
 import { useEffect, useRef, useState } from "react";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ChatPanel } from "./components/ChatPanel";
@@ -11,6 +13,7 @@ import {
   ChatMessage,
   ChatRequest,
   ChatResponse,
+  ChartInsert,
   ProviderOption,
   CellUpdate,
   FormatUpdate,
@@ -20,6 +23,7 @@ import {
 import {
   applyCellUpdates,
   applyFormatUpdates,
+  insertCharts,
   getCurrentSelection,
   getSelectionsFromPrompt
 } from "./excel";
@@ -158,6 +162,7 @@ export function App() {
       if (contentType.includes("application/x-ndjson")) {
         let pendingCellUpdates: CellUpdate[] = [];
         let pendingFormatUpdates: FormatUpdate[] = [];
+        let pendingChartInserts: ChartInsert[] = [];
         let pendingTelemetry: Telemetry | null = null;
 
         let buffer = "";
@@ -184,6 +189,11 @@ export function App() {
             case "format_updates":
               if (event.payload && event.payload.length > 0) {
                 pendingFormatUpdates = pendingFormatUpdates.concat(event.payload);
+              }
+              break;
+            case "chart_inserts":
+              if (event.payload && event.payload.length > 0) {
+                pendingChartInserts = pendingChartInserts.concat(event.payload);
               }
               break;
             case "telemetry":
@@ -221,14 +231,15 @@ export function App() {
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
 
-          while (true) {
+          let reading = true;
+          while (reading) {
             const { value, done } = await reader.read();
-            if (done) {
-              break;
-            }
             if (value) {
               buffer += decoder.decode(value, { stream: true });
               drainBuffer(false);
+            }
+            if (done) {
+              reading = false;
             }
           }
 
@@ -246,6 +257,9 @@ export function App() {
         if (pendingFormatUpdates.length > 0) {
           await applyFormatUpdates(pendingFormatUpdates);
         }
+        if (pendingChartInserts.length > 0) {
+          await insertCharts(pendingChartInserts);
+        }
         if (pendingTelemetry) {
           console.debug("Chat telemetry", pendingTelemetry);
         }
@@ -260,6 +274,9 @@ export function App() {
         }
         if (json.format_updates && json.format_updates.length > 0) {
           await applyFormatUpdates(json.format_updates);
+        }
+        if (json.chart_inserts && json.chart_inserts.length > 0) {
+          await insertCharts(json.chart_inserts);
         }
       }
     } catch (error) {

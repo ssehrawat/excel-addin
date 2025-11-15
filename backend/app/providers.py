@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -22,6 +23,8 @@ from pydantic import ValidationError
 
 from .config import get_settings
 from .schemas import (
+    ChartInsert,
+    ChartSeriesBy,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -38,6 +41,25 @@ logger = logging.getLogger(__name__)
 STREAM_MESSAGE_DELAY_SECONDS = 0.35
 STREAM_MESSAGE_CHUNK_DELAY_SECONDS = 0.08
 STREAM_MESSAGE_CHUNK_SIZE = 48
+
+CHART_TYPE_ALIASES: Dict[str, str] = {
+    "scatter": "XYScatter",
+    "scatterplot": "XYScatter",
+    "scatterchart": "XYScatter",
+    "scattermarkers": "XYScatter",
+    "xyscatter": "XYScatter",
+    "xyscattermarkers": "XYScatter",
+    "scatterlines": "XYScatterLines",
+    "scatterline": "XYScatterLines",
+    "xyscatterlines": "XYScatterLines",
+    "scatterlinenomarkers": "XYScatterLinesNoMarkers",
+    "scatterlinesnomarkers": "XYScatterLinesNoMarkers",
+    "xyscatterlinesnomarkers": "XYScatterLinesNoMarkers",
+    "bubble": "Bubble",
+    "line": "LineMarkers",
+    "column": "ColumnClustered",
+    "bar": "BarClustered",
+}
 
 
 def _timestamp() -> str:
@@ -60,7 +82,10 @@ def _is_response_format_error(error: Exception) -> bool:
     text = str(error).lower()
     if "response_format" not in text:
         return False
-    return any(keyword in text for keyword in ["not supported", "unsupported", "only available"])
+    return any(
+        keyword in text
+        for keyword in ["not supported", "unsupported", "only available"]
+    )
 
 
 @dataclass
@@ -68,6 +93,7 @@ class ProviderResult:
     messages: List[ChatMessage]
     cell_updates: List[CellUpdate] = field(default_factory=list)
     format_updates: List[FormatUpdate] = field(default_factory=list)
+    chart_inserts: List[ChartInsert] = field(default_factory=list)
     telemetry: Optional[Telemetry] = None
 
     def to_response(self) -> ChatResponse:
@@ -75,6 +101,7 @@ class ProviderResult:
             messages=self.messages,
             cell_updates=self.cell_updates,
             format_updates=self.format_updates,
+            chart_inserts=self.chart_inserts,
             telemetry=self.telemetry,
         )
 
@@ -121,6 +148,14 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
             "type": "format_updates",
             "payload": [
                 item.model_dump(by_alias=True) for item in result.format_updates
+            ],
+        }
+    if result.chart_inserts:
+        await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
+        yield {
+            "type": "chart_inserts",
+            "payload": [
+                item.model_dump(by_alias=True) for item in result.chart_inserts
             ],
         }
     if result.telemetry:
@@ -225,6 +260,20 @@ class MockProvider:
                     )
                 )
 
+        chart_inserts: List[ChartInsert] = []
+        if request.selection and any(
+            keyword in request.prompt.lower() for keyword in ("chart", "graph")
+        ):
+            chart_inserts.append(
+                ChartInsert(
+                    chart_type="columnClustered",
+                    source_address=request.selection[0].address,
+                    source_worksheet=request.selection[0].worksheet,
+                    title="(mock) Selection overview",
+                    series_by=ChartSeriesBy.AUTO,
+                )
+            )
+
         telemetry = Telemetry(
             provider=self.id,
             model="mock-local",
@@ -235,6 +284,7 @@ class MockProvider:
             messages=messages,
             cell_updates=cell_updates,
             format_updates=format_updates,
+            chart_inserts=chart_inserts,
             telemetry=telemetry,
         )
 
@@ -293,8 +343,9 @@ class OpenAIProvider:
             "You are Workbook Copilot, an Excel-focused assistant. "
             "Respond with JSON containing exact keys: "
             "`thoughts` (array of strings), `steps` (array of strings), `answer` (string), "
-            "`suggestions` (array of strings), `cell_updates` (array of objects), and "
-            "`format_updates` (array of objects for formatting changes). "
+            "`suggestions` (array of strings), `cell_updates` (array of objects), "
+            "`format_updates` (array of objects for formatting changes), and "
+            "`chart_inserts` (array of objects describing charts to create). "
             "Every cell update object MUST include: "
             "`address` (A1 notation, include worksheet like 'Sheet1!E7:E9' when known), "
             "`mode` ('replace' or 'append'), and `values` (a two-dimensional array of rows; "
@@ -302,6 +353,11 @@ class OpenAIProvider:
             "Only use modes 'replace' or 'append'. Provide cell updates whenever data in Excel should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields such as "
             "`fill_color`, `font_color`, `bold`, `italic`. "
+            "Every chart insert MUST include `chartType` (matching Excel.ChartType), `sourceAddress` "
+            "(data range, include worksheet when known). Optional fields: `sourceWorksheet`, `destinationWorksheet`, "
+            "`name`, `title`, `topLeftCell`, `bottomRightCell`, `seriesBy` ('auto' | 'rows' | 'columns'). "
+            "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
+            "do not return aliases like 'xlXYScatter' or 'Scatter'. "
             "Return strictly valid JSON with fully expanded arrays—never include formulas, code, or list comprehensions."
         )
 
@@ -330,6 +386,7 @@ class OpenAIProvider:
         provider_messages = assemble_messages_from_payload(parsed, request.prompt)
         cell_updates = build_cell_updates(parsed.get("cell_updates", []))
         format_updates = build_format_updates(parsed.get("format_updates", []))
+        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         telemetry = Telemetry(
             provider=self.id,
@@ -341,6 +398,7 @@ class OpenAIProvider:
             messages=provider_messages,
             cell_updates=cell_updates,
             format_updates=format_updates,
+            chart_inserts=chart_inserts,
             telemetry=telemetry,
         )
 
@@ -407,6 +465,12 @@ class AnthropicProvider:
             "Only use modes 'replace' or 'append'. Provide cell updates whenever the workbook should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields "
             "like `fill_color`, `font_color`, `bold`, `italic`. "
+            "Include `chart_inserts` as an array when a chart should be created. Each chart insert object must include "
+            "`chartType` (Excel.ChartType string) and `sourceAddress` (include worksheet when known). "
+            "Optional fields: `sourceWorksheet`, `destinationWorksheet`, `name`, `title`, `topLeftCell`, `bottomRightCell`, "
+            "`seriesBy` ('auto' | 'rows' | 'columns'). "
+            "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
+            "avoid aliases like 'xlXYScatter' or 'Scatter'. "
             "Return strictly valid JSON with fully enumerated arrays—no formulas, code, or list comprehensions."
         )
         messages = [
@@ -434,6 +498,7 @@ class AnthropicProvider:
         provider_messages = assemble_messages_from_payload(parsed, request.prompt)
         cell_updates = build_cell_updates(parsed.get("cell_updates", []))
         format_updates = build_format_updates(parsed.get("format_updates", []))
+        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         telemetry = Telemetry(
             provider=self.id,
@@ -445,6 +510,7 @@ class AnthropicProvider:
             messages=provider_messages,
             cell_updates=cell_updates,
             format_updates=format_updates,
+            chart_inserts=chart_inserts,
             telemetry=telemetry,
         )
 
@@ -465,11 +531,29 @@ def build_prompt_payload(request: ChatRequest) -> str:
         "selection": selection_text,
         "instructions": (
             "Provide JSON with keys: thoughts (array), steps (array), answer (string), "
-            "suggestions (array), cell_updates (array of {address, mode, values}). "
+            "suggestions (array), cell_updates (array of {address, mode, values}), "
+            "format_updates (array of {address, worksheet, fillColor, fontColor, bold, italic}), "
+            "chart_inserts (array of {chartType, sourceAddress, sourceWorksheet?, "
+            "destinationWorksheet?, name?, title?, topLeftCell?, bottomRightCell?, seriesBy?}). "
             "Use concise actionable language."
         ),
     }
     return json.dumps(payload)
+
+
+def _normalize_identifier(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.strip().lower().lstrip("xl"))
+
+
+def _normalize_chart_type(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = _normalize_identifier(value)
+    if not normalized:
+        return None
+    if normalized in CHART_TYPE_ALIASES:
+        return CHART_TYPE_ALIASES[normalized]
+    return value
 
 
 def parse_structured_response(content: Any) -> Dict[str, Any]:
@@ -487,6 +571,7 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
         "suggestions": [],
         "cell_updates": [],
         "format_updates": [],
+        "chart_inserts": [],
     }
 
 
@@ -595,6 +680,64 @@ def build_format_updates(raw_updates: Any) -> List[FormatUpdate]:
                 error,
             )
     return updates
+
+
+def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
+    inserts: List[ChartInsert] = []
+    for candidate in _ensure_iterable(raw_inserts):
+        if not isinstance(candidate, dict):
+            continue
+        chart_type_raw = candidate.get("chart_type") or candidate.get("chartType")
+        source_address = candidate.get("source_address") or candidate.get(
+            "sourceAddress"
+        )
+        chart_type = _normalize_chart_type(chart_type_raw)
+        if not chart_type or not source_address:
+            if not chart_type:
+                logger.warning(
+                    "Skipping chart insert due to unsupported chart type: %s",
+                    chart_type_raw,
+                )
+            continue
+        source_worksheet = candidate.get("source_worksheet") or candidate.get(
+            "sourceWorksheet"
+        )
+        destination_worksheet = candidate.get(
+            "destination_worksheet"
+        ) or candidate.get("destinationWorksheet")
+        top_left_cell = candidate.get("top_left_cell") or candidate.get("topLeftCell")
+        bottom_right_cell = candidate.get("bottom_right_cell") or candidate.get(
+            "bottomRightCell"
+        )
+        name = candidate.get("name")
+        title = candidate.get("title")
+        series_by_raw = candidate.get("series_by") or candidate.get("seriesBy")
+        series_by = ChartSeriesBy.AUTO
+        if isinstance(series_by_raw, str):
+            normalized_series_by = series_by_raw.lower()
+            if normalized_series_by in {item.value for item in ChartSeriesBy}:
+                series_by = ChartSeriesBy(normalized_series_by)
+        try:
+            inserts.append(
+                ChartInsert(
+                    chart_type=chart_type,
+                    source_address=source_address,
+                    source_worksheet=source_worksheet,
+                    destination_worksheet=destination_worksheet,
+                    top_left_cell=top_left_cell,
+                    bottom_right_cell=bottom_right_cell,
+                    name=name,
+                    title=title,
+                    series_by=series_by,
+                )
+            )
+        except ValidationError as error:
+            logger.warning(
+                "Skipping invalid chart insert %s due to validation error: %s",
+                candidate,
+                error,
+            )
+    return inserts
 
 
 def available_providers() -> List[Dict[str, Any]]:

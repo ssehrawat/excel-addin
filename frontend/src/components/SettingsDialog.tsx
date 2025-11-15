@@ -18,6 +18,7 @@ interface SettingsDialogProps {
   open: boolean;
   providers: ProviderOption[];
   selectedProvider: string;
+  // eslint-disable-next-line no-unused-vars
   onSelect: (providerId: string) => void;
   onClose: () => void;
 }

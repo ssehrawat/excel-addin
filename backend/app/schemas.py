@@ -64,6 +64,29 @@ class FormatUpdate(BaseModel):
         populate_by_name = True
 
 
+class ChartSeriesBy(str, Enum):
+    AUTO = "auto"
+    ROWS = "rows"
+    COLUMNS = "columns"
+
+
+class ChartInsert(BaseModel):
+    chart_type: str = Field(..., alias="chartType")
+    source_address: str = Field(..., alias="sourceAddress")
+    source_worksheet: Optional[str] = Field(default=None, alias="sourceWorksheet")
+    destination_worksheet: Optional[str] = Field(
+        default=None, alias="destinationWorksheet"
+    )
+    name: Optional[str] = None
+    title: Optional[str] = None
+    top_left_cell: Optional[str] = Field(default=None, alias="topLeftCell")
+    bottom_right_cell: Optional[str] = Field(default=None, alias="bottomRightCell")
+    series_by: ChartSeriesBy = Field(default=ChartSeriesBy.AUTO, alias="seriesBy")
+
+    class Config:
+        populate_by_name = True
+
+
 class ChatRequest(BaseModel):
     prompt: str
     provider: str
@@ -86,6 +109,9 @@ class ChatResponse(BaseModel):
     cell_updates: List[CellUpdate] = Field(default_factory=list, alias="cell_updates")
     format_updates: List[FormatUpdate] = Field(
         default_factory=list, alias="format_updates"
+    )
+    chart_inserts: List[ChartInsert] = Field(
+        default_factory=list, alias="chart_inserts"
     )
     telemetry: Optional[Telemetry] = None
 

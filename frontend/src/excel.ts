@@ -1,4 +1,11 @@
-import { CellSelection, CellUpdate, FormatUpdate } from "./types";
+/* global Excel, Office */
+
+import {
+  CellSelection,
+  CellUpdate,
+  ChartInsert,
+  FormatUpdate
+} from "./types";
 
 type RangeReference = {
   sheet?: string;
@@ -41,6 +48,54 @@ const splitReference = (
   const rangeAddress = segments.pop() ?? reference;
   const sheetName = normalizeSheetName(segments.join("!"));
   return { sheetName, rangeAddress };
+};
+
+const normalizeIdentifier = (value: string): string =>
+  value
+    .trim()
+    .replace(/^xl/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+
+const CHART_TYPE_ALIASES: Record<string, Excel.ChartType> = {
+  scatter: Excel.ChartType.xyscatter,
+  scatterplot: Excel.ChartType.xyscatter,
+  scatterchart: Excel.ChartType.xyscatter,
+  scattermarkers: Excel.ChartType.xyscatter,
+  xyscattermarkers: Excel.ChartType.xyscatter,
+  xyscatter: Excel.ChartType.xyscatter,
+  scatterlines: Excel.ChartType.xyscatterLines,
+  scatterline: Excel.ChartType.xyscatterLines,
+  xyscatterlines: Excel.ChartType.xyscatterLines,
+  scatterlinesnomarkers: Excel.ChartType.xyscatterLinesNoMarkers,
+  xyscatterlinesnomarkers: Excel.ChartType.xyscatterLinesNoMarkers,
+  scatterlinenomarkers: Excel.ChartType.xyscatterLinesNoMarkers,
+  bubble: Excel.ChartType.bubble,
+  line: Excel.ChartType.lineMarkers,
+  column: Excel.ChartType.columnClustered,
+  bar: Excel.ChartType.barClustered
+};
+
+const resolveChartType = (rawType: string): Excel.ChartType | null => {
+  if (!rawType) {
+    return null;
+  }
+  const normalizedInput = normalizeIdentifier(rawType);
+  if (normalizedInput in CHART_TYPE_ALIASES) {
+    return CHART_TYPE_ALIASES[normalizedInput];
+  }
+  const chartTypeEntries = Object.entries(
+    Excel.ChartType as unknown as Record<string, string>
+  );
+  for (const [key, value] of chartTypeEntries) {
+    if (
+      normalizeIdentifier(key) === normalizedInput ||
+      normalizeIdentifier(value) === normalizedInput
+    ) {
+      return value as Excel.ChartType;
+    }
+  }
+  return null;
 };
 
 export async function getCurrentSelection(): Promise<CellSelection[]> {
@@ -168,6 +223,84 @@ export async function applyFormatUpdates(
         }
       } catch (error) {
         console.error("Unable to apply format update", update, error);
+      }
+    }
+    await context.sync();
+  });
+}
+
+export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return;
+  }
+  if (inserts.length === 0) {
+    return;
+  }
+
+  await Excel.run(async (context) => {
+    for (const insert of inserts) {
+      try {
+        const { sheetName: inferredSheet, rangeAddress } = splitReference(
+          insert.sourceAddress
+        );
+        const sourceSheetName =
+          normalizeSheetName(insert.sourceWorksheet ?? undefined) ??
+          inferredSheet;
+        const sourceWorksheet =
+          sourceSheetName != null
+            ? context.workbook.worksheets.getItem(sourceSheetName)
+            : context.workbook.worksheets.getActiveWorksheet();
+        const sourceRange = sourceWorksheet.getRange(rangeAddress);
+
+        const destinationSheetName = normalizeSheetName(
+          insert.destinationWorksheet ?? undefined
+        );
+        const destinationWorksheet =
+          destinationSheetName != null
+            ? context.workbook.worksheets.getItem(destinationSheetName)
+            : sourceWorksheet;
+
+        const chartType = resolveChartType(insert.chartType);
+        if (!chartType) {
+          console.warn(
+            "Unsupported chart type provided; skipping chart insertion",
+            insert.chartType
+          );
+          continue;
+        }
+        let seriesBy: Excel.ChartSeriesBy;
+        switch ((insert.seriesBy ?? "auto").toLowerCase()) {
+          case "rows":
+            seriesBy = Excel.ChartSeriesBy.rows;
+            break;
+          case "columns":
+            seriesBy = Excel.ChartSeriesBy.columns;
+            break;
+          default:
+            seriesBy = Excel.ChartSeriesBy.auto;
+        }
+
+        const chart = destinationWorksheet.charts.add(
+          chartType,
+          sourceRange,
+          seriesBy
+        );
+        if (insert.name) {
+          chart.name = insert.name;
+        }
+        if (insert.title) {
+          chart.title.text = insert.title;
+          chart.title.visible = true;
+        }
+        if (insert.topLeftCell) {
+          const topLeft = destinationWorksheet.getRange(insert.topLeftCell);
+          const bottomRight = insert.bottomRightCell
+            ? destinationWorksheet.getRange(insert.bottomRightCell)
+            : undefined;
+          chart.setPosition(topLeft, bottomRight);
+        }
+      } catch (error) {
+        console.error("Unable to insert chart", insert, error);
       }
     }
     await context.sync();
