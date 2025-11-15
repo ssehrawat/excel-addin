@@ -36,7 +36,9 @@ class LangGraphOrchestrator:
         async def attach_request(state: OrchestratorState) -> OrchestratorState:
             if "request" not in state:
                 raise ValueError("Request missing from orchestration state.")
-            logger.debug("Received chat request for provider '%s'", state["request"].provider)
+            logger.debug(
+                "Received chat request for provider '%s'", state["request"].provider
+            )
             return {
                 "provider_id": state["request"].provider.lower(),
                 "metadata": {"started_at": time.time()},
@@ -48,7 +50,9 @@ class LangGraphOrchestrator:
             result = await provider.generate(state["request"])
             metadata = state.get("metadata", {})
             metadata["provider_label"] = getattr(provider, "label", provider_id)
-            metadata["available_providers"] = [item["id"] for item in available_providers()]
+            metadata["available_providers"] = [
+                item["id"] for item in available_providers()
+            ]
             return {"provider_result": result, "metadata": metadata}
 
         def finalize(state: OrchestratorState) -> OrchestratorState:
@@ -77,9 +81,7 @@ class LangGraphOrchestrator:
         result_state = await self._compiled.ainvoke({"request": request})
         return result_state["response"]
 
-    async def stream(
-        self, request: ChatRequest
-    ) -> AsyncIterator[ProviderStreamEvent]:
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         provider_id = request.provider.lower()
         started_at = time.time()
         telemetry_payload: Dict[str, Any] = {}
@@ -105,7 +107,9 @@ class LangGraphOrchestrator:
                     continue
                 yield event
         except Exception as exc:  # pragma: no cover
-            logger.exception("Error while streaming response from provider '%s'", provider_id)
+            logger.exception(
+                "Error while streaming response from provider '%s'", provider_id
+            )
             yield {
                 "type": "error",
                 "payload": {"message": str(exc)},
@@ -121,4 +125,3 @@ class LangGraphOrchestrator:
 
         yield {"type": "telemetry", "payload": telemetry}
         yield {"type": "done"}
-

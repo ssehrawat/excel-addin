@@ -5,7 +5,16 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Protocol, TypedDict
+from typing import (
+    Any,
+    AsyncIterator,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Protocol,
+    TypedDict,
+)
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -191,9 +200,7 @@ class MockProvider:
             telemetry=telemetry,
         )
 
-    async def stream(
-        self, request: ChatRequest
-    ) -> AsyncIterator[ProviderStreamEvent]:
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         result = await self.generate(request)
         async for event in _stream_result(result):
             if event.get("type") == "message":
@@ -277,9 +284,7 @@ class OpenAIProvider:
             telemetry=telemetry,
         )
 
-    async def stream(
-        self, request: ChatRequest
-    ) -> AsyncIterator[ProviderStreamEvent]:
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         result = await self.generate(request)
         async for event in _stream_result(result):
             yield event
@@ -357,9 +362,7 @@ class AnthropicProvider:
             telemetry=telemetry,
         )
 
-    async def stream(
-        self, request: ChatRequest
-    ) -> AsyncIterator[ProviderStreamEvent]:
+    async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         result = await self.generate(request)
         async for event in _stream_result(result):
             yield event
