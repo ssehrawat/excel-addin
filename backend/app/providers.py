@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Protocol
+from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Protocol, TypedDict
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -53,6 +53,37 @@ class ProviderResult:
         )
 
 
+class ProviderStreamEvent(TypedDict, total=False):
+    type: str
+    payload: Any
+
+
+async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStreamEvent]:
+    for message in result.messages:
+        yield {
+            "type": "message",
+            "payload": message.model_dump(by_alias=True),
+        }
+        await asyncio.sleep(0)
+    if result.cell_updates:
+        yield {
+            "type": "cell_updates",
+            "payload": [item.model_dump(by_alias=True) for item in result.cell_updates],
+        }
+    if result.format_updates:
+        yield {
+            "type": "format_updates",
+            "payload": [
+                item.model_dump(by_alias=True) for item in result.format_updates
+            ],
+        }
+    if result.telemetry:
+        yield {
+            "type": "telemetry",
+            "payload": result.telemetry.model_dump(by_alias=True),
+        }
+
+
 class LLMProvider(Protocol):
     id: str
     label: str
@@ -60,6 +91,10 @@ class LLMProvider(Protocol):
     requires_key: bool
 
     async def generate(self, request: ChatRequest) -> ProviderResult: ...
+
+    async def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[ProviderStreamEvent]: ...
 
 
 class MockProvider:
@@ -156,6 +191,15 @@ class MockProvider:
             telemetry=telemetry,
         )
 
+    async def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        result = await self.generate(request)
+        async for event in _stream_result(result):
+            if event.get("type") == "message":
+                await asyncio.sleep(0.05)
+            yield event
+
 
 class OpenAIProvider:
     id = "openai"
@@ -233,6 +277,13 @@ class OpenAIProvider:
             telemetry=telemetry,
         )
 
+    async def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        result = await self.generate(request)
+        async for event in _stream_result(result):
+            yield event
+
 
 class AnthropicProvider:
     id = "anthropic"
@@ -305,6 +356,13 @@ class AnthropicProvider:
             format_updates=format_updates,
             telemetry=telemetry,
         )
+
+    async def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        result = await self.generate(request)
+        async for event in _stream_result(result):
+            yield event
 
 
 def build_prompt_payload(request: ChatRequest) -> str:

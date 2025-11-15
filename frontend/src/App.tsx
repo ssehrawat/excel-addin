@@ -11,7 +11,11 @@ import {
   ChatMessage,
   ChatRequest,
   ChatResponse,
-  ProviderOption
+  ProviderOption,
+  CellUpdate,
+  FormatUpdate,
+  Telemetry,
+  ChatStreamEvent
 } from "./types";
 import {
   applyCellUpdates,
@@ -84,6 +88,14 @@ export function App() {
     messagesRef.current = history;
     setIsBusy(true);
 
+    const appendMessage = (message: ChatMessage) => {
+      setMessages((prev) => {
+        const next = [...prev, message];
+        messagesRef.current = next;
+        return next;
+      });
+    };
+
     try {
       if (typeof Office === "undefined") {
         throw new Error("Office runtime is not available. Please run inside Excel.");
@@ -107,7 +119,10 @@ export function App() {
 
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson"
+        },
         body: JSON.stringify(payload)
       });
 
@@ -118,16 +133,104 @@ export function App() {
         );
       }
 
-      const json = (await response.json()) as ChatResponse;
-      const combinedMessages = [...history, ...json.messages];
-      setMessages(combinedMessages);
-      messagesRef.current = combinedMessages;
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/x-ndjson")) {
+        let pendingCellUpdates: CellUpdate[] = [];
+        let pendingFormatUpdates: FormatUpdate[] = [];
+        let pendingTelemetry: Telemetry | null = null;
 
-      if (json.cell_updates && json.cell_updates.length > 0) {
-        await applyCellUpdates(json.cell_updates);
-      }
-      if (json.format_updates && json.format_updates.length > 0) {
-        await applyFormatUpdates(json.format_updates);
+        let buffer = "";
+
+        const handleStreamEvent = (event: ChatStreamEvent) => {
+          switch (event.type) {
+            case "message":
+              appendMessage(event.payload);
+              break;
+            case "cell_updates":
+              if (event.payload && event.payload.length > 0) {
+                pendingCellUpdates = pendingCellUpdates.concat(event.payload);
+              }
+              break;
+            case "format_updates":
+              if (event.payload && event.payload.length > 0) {
+                pendingFormatUpdates = pendingFormatUpdates.concat(event.payload);
+              }
+              break;
+            case "telemetry":
+              pendingTelemetry = event.payload ?? null;
+              break;
+            case "error":
+              throw new Error(event.payload?.message ?? "Streaming error");
+            case "done":
+            default:
+              break;
+          }
+        };
+
+        const drainBuffer = (flush: boolean) => {
+          let newlineIndex = buffer.indexOf("\n");
+          while (newlineIndex !== -1) {
+            const line = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 1);
+            if (line) {
+              const event = JSON.parse(line) as ChatStreamEvent;
+              handleStreamEvent(event);
+            }
+            newlineIndex = buffer.indexOf("\n");
+          }
+          if (flush) {
+            const remaining = buffer.trim();
+            buffer = "";
+            if (remaining) {
+              const event = JSON.parse(remaining) as ChatStreamEvent;
+              handleStreamEvent(event);
+            }
+          }
+        };
+        if (response.body) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              break;
+            }
+            if (value) {
+              buffer += decoder.decode(value, { stream: true });
+              drainBuffer(false);
+            }
+          }
+
+          buffer += decoder.decode();
+          drainBuffer(true);
+        } else {
+          const textPayload = await response.text();
+          buffer = textPayload;
+          drainBuffer(true);
+        }
+
+        if (pendingCellUpdates.length > 0) {
+          await applyCellUpdates(pendingCellUpdates);
+        }
+        if (pendingFormatUpdates.length > 0) {
+          await applyFormatUpdates(pendingFormatUpdates);
+        }
+        if (pendingTelemetry) {
+          console.debug("Chat telemetry", pendingTelemetry);
+        }
+      } else {
+        const json = (await response.json()) as ChatResponse;
+        const combinedMessages = [...history, ...json.messages];
+        setMessages(combinedMessages);
+        messagesRef.current = combinedMessages;
+
+        if (json.cell_updates && json.cell_updates.length > 0) {
+          await applyCellUpdates(json.cell_updates);
+        }
+        if (json.format_updates && json.format_updates.length > 0) {
+          await applyFormatUpdates(json.format_updates);
+        }
       }
     } catch (error) {
       console.error(error);

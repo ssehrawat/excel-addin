@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import json
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import Settings, get_settings
 from .orchestrator import LangGraphOrchestrator
@@ -37,10 +39,28 @@ def create_app(settings: Settings) -> FastAPI:
     async def providers() -> ProvidersResponse:
         return ProvidersResponse(providers=available_providers())
 
-    @app.post("/chat", response_model=ChatResponse, tags=["chat"])
-    async def chat_endpoint(request: ChatRequest) -> ChatResponse:
-        logger.info("Handling chat request with provider %s", request.provider)
-        return await orchestrator.run(request)
+    @app.post("/chat", tags=["chat"])
+    async def chat_endpoint(chat_request: ChatRequest, http_request: Request):
+        logger.info(
+            "Handling chat request with provider %s", chat_request.provider
+        )
+
+        accept_header = http_request.headers.get("accept", "").lower()
+        wants_stream = "application/x-ndjson" in accept_header
+
+        if wants_stream:
+            async def stream_response():
+                async for event in orchestrator.stream(chat_request):
+                    yield json.dumps(event) + "\n"
+
+            return StreamingResponse(
+                stream_response(),
+                media_type="application/x-ndjson",
+                headers={"Cache-Control": "no-cache"},
+            )
+
+        response = await orchestrator.run(chat_request)
+        return JSONResponse(content=response.model_dump(by_alias=True))
 
     return app
 

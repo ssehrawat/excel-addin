@@ -54,7 +54,7 @@ export interface ChatResponse {
   messages: ChatMessage[];
   cell_updates?: CellUpdate[];
   format_updates?: FormatUpdate[];
-  telemetry?: Record<string, unknown>;
+  telemetry?: Telemetry | null;
 }
 
 export interface ProviderOption {
@@ -63,4 +63,21 @@ export interface ProviderOption {
   description: string;
   requiresKey: boolean;
 }
+
+export interface Telemetry {
+  latency_ms?: number;
+  provider?: string;
+  model?: string;
+  tokens_prompt?: number;
+  tokens_completion?: number;
+  raw?: Record<string, unknown> | null;
+}
+
+export type ChatStreamEvent =
+  | { type: "message"; payload: ChatMessage }
+  | { type: "cell_updates"; payload: CellUpdate[] }
+  | { type: "format_updates"; payload: FormatUpdate[] }
+  | { type: "telemetry"; payload: Telemetry | null }
+  | { type: "done"; payload?: null }
+  | { type: "error"; payload: { message: string } };
 

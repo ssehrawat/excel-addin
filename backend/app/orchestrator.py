@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, TypedDict
+from typing import Any, AsyncIterator, Dict, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from .providers import ProviderResult, available_providers, create_provider
+from .providers import (
+    ProviderResult,
+    ProviderStreamEvent,
+    available_providers,
+    create_provider,
+)
 from .schemas import ChatRequest, ChatResponse
 
 logger = logging.getLogger(__name__)
@@ -71,4 +76,49 @@ class LangGraphOrchestrator:
     async def run(self, request: ChatRequest) -> ChatResponse:
         result_state = await self._compiled.ainvoke({"request": request})
         return result_state["response"]
+
+    async def stream(
+        self, request: ChatRequest
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        provider_id = request.provider.lower()
+        started_at = time.time()
+        telemetry_payload: Dict[str, Any] = {}
+
+        try:
+            provider = create_provider(provider_id)
+        except Exception as exc:  # pragma: no cover
+            logger.exception("Failed to initialize provider '%s'", provider_id)
+            yield {
+                "type": "error",
+                "payload": {"message": str(exc)},
+            }
+            return
+
+        try:
+            async for event in provider.stream(request):
+                if event.get("type") == "telemetry":
+                    payload = event.get("payload") or {}
+                    if isinstance(payload, dict):
+                        telemetry_payload.update(payload)
+                    else:
+                        telemetry_payload.update(dict(payload))
+                    continue
+                yield event
+        except Exception as exc:  # pragma: no cover
+            logger.exception("Error while streaming response from provider '%s'", provider_id)
+            yield {
+                "type": "error",
+                "payload": {"message": str(exc)},
+            }
+            return
+
+        latency_ms = (time.time() - started_at) * 1000
+        telemetry = dict(telemetry_payload)
+        telemetry.setdefault("provider", getattr(provider, "id", provider_id))
+        if "model" not in telemetry and hasattr(provider, "model"):
+            telemetry["model"] = getattr(provider, "model")
+        telemetry["latency_ms"] = latency_ms
+
+        yield {"type": "telemetry", "payload": telemetry}
+        yield {"type": "done"}
 

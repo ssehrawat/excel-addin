@@ -27,7 +27,8 @@ The server exposes:
 
 - `GET /health` – readiness probe
 - `GET /providers` – configured providers
-- `POST /chat` – chat endpoint used by the add-in
+- `POST /chat` – chat endpoint used by the add-in. Send `Accept: application/x-ndjson`
+  to receive streaming message/cell-update events as they are produced.
 
 ### Frontend setup
 
@@ -55,8 +56,8 @@ $env:API_BASE_URL="https://localhost:8000"; npm start
 
 - Select any cells you want to include as context before sending a prompt.
 - If your prompt contains explicit references (e.g. `Sheet1!B2:C5` or `A1:B3`), those ranges are fetched and sent instead of the current selection.
-- The chat window shows thought/step/final/suggestion messages returned from the backend.
-- If the backend responds with `cell_updates`, they are automatically written into the workbook.
+- Responses stream into the panel when the backend emits NDJSON events, so
+  thought/step/final bubbles appear as they are produced.
 - Formatting instructions (`format_updates`) such as fill color, font color, bold/italic are applied to the specified ranges.
 - Use the settings gear to switch between configured providers (`mock`, `openai`, `anthropic`).
 

@@ -1,0 +1,33 @@
+# Cursor Rules for excel-addin
+
+## Repository Overview
+- Office taskpane add-in named Workbook Copilot with Python FastAPI backend in `backend/app` and React + TypeScript frontend in `frontend`.
+- Backend exposes REST endpoints (`/health`, `/providers`, `/chat`) and relies on provider integrations defined in `providers.py`.
+- Frontend uses Office.js APIs and expects the backend at `https://localhost:8000` by default.
+
+## Backend (Python 3.11, FastAPI)
+- Prefer async FastAPI endpoints and keep request/response models in `schemas.py`.
+- Centralize configuration in `config.py` using `pydantic.Settings`; read environment variables via `get_settings()`.
+- Register new orchestrator logic in `orchestrator.py`; extend `LangGraphOrchestrator` rather than creating ad-hoc flows.
+- Honor logging patterns already in place (`logging.getLogger(__name__)`).
+- Keep provider definitions in `providers.py`; new providers should implement `BaseProvider` and be added to `available_providers()`.
+- Run locally with `python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (add SSL flags when Excel requires HTTPS).
+
+## Frontend (React + TypeScript)
+- Use functional components; colocate styles in `taskpane.css` or CSS modules if added later.
+- Keep provider options and API URLs in `config.ts`; expose types via `types.ts`.
+- Use Office.js patterns already established in `excel.ts`; avoid blocking UI thread—delegate long tasks to backend.
+- npm scripts: `npm start` for dev, `npm run build` for production. Trust certificates using `npm run dev:cert` if HTTPS issues arise.
+
+## Testing & Quality
+- Provide unit tests where feasible (Python: `pytest`; TypeScript: add tests under `frontend/src/__tests__` when necessary).
+- Maintain type hints across Python code, keep FastAPI response models explicit.
+- Prefer ESLint and Prettier defaults defined in `.eslintrc.json` and project config.
+
+## Git & Repo Hygiene
+- Do not commit secrets or local environment files (`.env`, `manifest.md`, certs are ignored).
+- When adding dependencies, update respective lockfiles (`requirements.txt`, `package-lock.json`).
+- Document major changes in `README.md` or dedicated docs if added.
+- Always track GITSHA after every meaningful task completion.
+- Add it to the enhancements.md as a Phase Checkpoint.
+- Reference these SHAs when debugging, testing, or asking AI to resume from previous states.
