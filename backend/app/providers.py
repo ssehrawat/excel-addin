@@ -5,6 +5,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from uuid import uuid4
 from typing import (
     Any,
     AsyncIterator,
@@ -41,6 +42,10 @@ STREAM_MESSAGE_CHUNK_SIZE = 48
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _message_id() -> str:
+    return uuid4().hex
 
 
 def _ensure_iterable(value: Any) -> Iterable[Any]:
@@ -146,14 +151,14 @@ class MockProvider:
         ]
         messages = [
             ChatMessage(
-                id=_timestamp(),
+                id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.THOUGHT,
                 content="Reviewing your prompt and any selected cells.",
                 created_at=_timestamp(),
             ),
             ChatMessage(
-                id=_timestamp(),
+                id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.STEP,
                 content="Using built-in logic to craft a helpful answer.",
@@ -164,7 +169,7 @@ class MockProvider:
         if selection_preview:
             messages.append(
                 ChatMessage(
-                    id=_timestamp(),
+                    id=_message_id(),
                     role=MessageRole.ASSISTANT,
                     kind=MessageKind.CONTEXT,
                     content="Selected data:\n" + "\n".join(selection_preview),
@@ -174,7 +179,7 @@ class MockProvider:
 
         messages.append(
             ChatMessage(
-                id=_timestamp(),
+                id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
                 content=(
@@ -186,7 +191,7 @@ class MockProvider:
         )
         messages.append(
             ChatMessage(
-                id=_timestamp(),
+                id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.SUGGESTION,
                 content="Ask me to summarize a table, build a formula, or draft insights.",
@@ -443,7 +448,7 @@ def assemble_messages_from_payload(
                 continue
             messages.append(
                 ChatMessage(
-                    id=_timestamp(),
+                    id=_message_id(),
                     role=MessageRole.ASSISTANT,
                     kind=kind,
                     content=str(item),
@@ -453,7 +458,7 @@ def assemble_messages_from_payload(
     if not any(msg.kind == MessageKind.FINAL for msg in messages):
         messages.append(
             ChatMessage(
-                id=_timestamp(),
+                id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
                 content=f"Here is my best effort answer to: {prompt}",
