@@ -96,6 +96,27 @@ export function App() {
       });
     };
 
+    const appendMessageDelta = (id: string, delta: string) => {
+      setMessages((prev) => {
+        const next = prev.map((msg) =>
+          msg.id === id ? { ...msg, content: `${msg.content}${delta}` } : msg
+        );
+        messagesRef.current = next;
+        return next;
+      });
+    };
+
+    const finalizeMessage = (message: ChatMessage) => {
+      setMessages((prev) => {
+        const exists = prev.some((msg) => msg.id === message.id);
+        const next = exists
+          ? prev.map((msg) => (msg.id === message.id ? message : msg))
+          : [...prev, message];
+        messagesRef.current = next;
+        return next;
+      });
+    };
+
     try {
       if (typeof Office === "undefined") {
         throw new Error("Office runtime is not available. Please run inside Excel.");
@@ -143,8 +164,17 @@ export function App() {
 
         const handleStreamEvent = (event: ChatStreamEvent) => {
           switch (event.type) {
-            case "message":
+            case "message_start":
               appendMessage(event.payload);
+              break;
+            case "message_delta":
+              appendMessageDelta(event.payload.id, event.payload.delta);
+              break;
+            case "message_done":
+              finalizeMessage(event.payload);
+              break;
+            case "message":
+              finalizeMessage(event.payload);
               break;
             case "cell_updates":
               if (event.payload && event.payload.length > 0) {

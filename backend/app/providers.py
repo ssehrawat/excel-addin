@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 
 STREAM_MESSAGE_DELAY_SECONDS = 0.35
+STREAM_MESSAGE_CHUNK_DELAY_SECONDS = 0.08
+STREAM_MESSAGE_CHUNK_SIZE = 48
 
 
 def _timestamp() -> str:
@@ -70,14 +72,31 @@ class ProviderStreamEvent(TypedDict, total=False):
     payload: Any
 
 
+def _chunk_text(text: str, size: int = STREAM_MESSAGE_CHUNK_SIZE) -> Iterable[str]:
+    if not text:
+        return []
+    return [text[i : i + size] for i in range(0, len(text), size)]
+
+
 async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStreamEvent]:
     for index, message in enumerate(result.messages):
         if index > 0:
             await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
-        yield {
-            "type": "message",
-            "payload": message.model_dump(by_alias=True),
-        }
+
+        payload = message.model_dump(by_alias=True)
+        payload["content"] = ""
+        yield {"type": "message_start", "payload": payload}
+
+        for chunk in _chunk_text(message.content):
+            await asyncio.sleep(STREAM_MESSAGE_CHUNK_DELAY_SECONDS)
+            yield {
+                "type": "message_delta",
+                "payload": {"id": message.id, "delta": chunk},
+            }
+
+        await asyncio.sleep(STREAM_MESSAGE_CHUNK_DELAY_SECONDS)
+        yield {"type": "message_done", "payload": message.model_dump(by_alias=True)}
+
     if result.cell_updates:
         await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {

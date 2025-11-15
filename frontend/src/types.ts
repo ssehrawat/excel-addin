@@ -74,6 +74,9 @@ export interface Telemetry {
 }
 
 export type ChatStreamEvent =
+  | { type: "message_start"; payload: ChatMessage }
+  | { type: "message_delta"; payload: { id: string; delta: string } }
+  | { type: "message_done"; payload: ChatMessage }
   | { type: "message"; payload: ChatMessage }
   | { type: "cell_updates"; payload: CellUpdate[] }
   | { type: "format_updates"; payload: FormatUpdate[] }
