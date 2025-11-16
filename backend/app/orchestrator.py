@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from langgraph.graph import END, StateGraph
 
 from .mcp import MCPServerRecord, MCPServerService, ToolInvocationResult
+from .router import MCPRouter, RouterSelection
 from .providers import (
     ProviderResult,
     ProviderStreamEvent,
@@ -57,8 +58,13 @@ class OrchestratorState(TypedDict, total=False):
 class LangGraphOrchestrator:
     MAX_TOOL_CALLS = 3
 
-    def __init__(self, mcp_service: Optional[MCPServerService] = None) -> None:
+    def __init__(
+        self,
+        mcp_service: Optional[MCPServerService] = None,
+        router: Optional[MCPRouter] = None,
+    ) -> None:
         self._mcp_service = mcp_service
+        self._router = router
         self.graph = self._build_graph()
         self._compiled = self.graph.compile()
 
@@ -110,7 +116,7 @@ class LangGraphOrchestrator:
         return graph
 
     async def run(self, request: ChatRequest) -> ChatResponse:
-        plan = self._build_plan(request)
+        plan = await self._build_plan(request)
         pre_messages: List[ChatMessage] = []
         context_messages: List[ChatMessage] = []
         telemetry_updates: Dict[str, Any] = {}
@@ -161,7 +167,7 @@ class LangGraphOrchestrator:
         provider_id = request.provider.lower()
         started_at = time.time()
         telemetry_payload: Dict[str, Any] = {}
-        plan = self._build_plan(request)
+        plan = await self._build_plan(request)
         context_messages: List[ChatMessage] = []
         mcp_telemetry: Dict[str, Any] = {}
 
@@ -339,7 +345,7 @@ class LangGraphOrchestrator:
         augmented_messages = [*request.messages, *context_messages]
         return request.model_copy(update={"messages": augmented_messages})
 
-    def _build_plan(self, request: ChatRequest) -> PlanResult:
+    async def _build_plan(self, request: ChatRequest) -> PlanResult:
         if not self._mcp_service:
             return PlanResult(
                 steps=[
@@ -361,7 +367,7 @@ class LangGraphOrchestrator:
 
         prompt = request.prompt.strip()
         steps = ["Review the latest user prompt and workbook context."]
-        tool_calls = self._rank_tool_candidates(prompt, servers)
+        tool_calls = await self._select_tools(prompt, servers)
 
         if tool_calls:
             for call in tool_calls:
@@ -373,6 +379,50 @@ class LangGraphOrchestrator:
             steps.append("Use the selected LLM provider directly.")
 
         return PlanResult(steps=steps, tool_calls=tool_calls)
+
+    async def _select_tools(
+        self, prompt: str, servers: Sequence[MCPServerRecord]
+    ) -> List[PlannedToolCall]:
+        if not prompt or not servers:
+            return []
+        router_calls: List[PlannedToolCall] = []
+        if self._router:
+            try:
+                selections = await self._router.route(prompt, servers)
+                router_calls = self._convert_router_selections(selections, servers)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Router failed, falling back to heuristics: %s", exc)
+        if router_calls:
+            return router_calls[: self.MAX_TOOL_CALLS]
+        return self._rank_tool_candidates(prompt, servers)
+
+    def _convert_router_selections(
+        self,
+        selections: Sequence[RouterSelection],
+        servers: Sequence[MCPServerRecord],
+    ) -> List[PlannedToolCall]:
+        if not selections:
+            return []
+        server_map = {server.id: server for server in servers}
+        planned: List[PlannedToolCall] = []
+        for selection in selections:
+            server = server_map.get(selection.server_id)
+            if not server:
+                continue
+            tool = next(
+                (tool for tool in server.tools if tool.name == selection.tool_name),
+                None,
+            )
+            if not tool:
+                continue
+            planned.append(
+                PlannedToolCall(
+                    server=server,
+                    tool_name=tool.name,
+                    rationale=selection.rationale or tool.description or "gather data",
+                )
+            )
+        return planned
 
     def _rank_tool_candidates(
         self, prompt: str, servers: Sequence[MCPServerRecord]

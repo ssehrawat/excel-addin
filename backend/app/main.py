@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import Settings, get_settings
 from .mcp import MCPServerService
+from .router import MCPRouter
 from .orchestrator import LangGraphOrchestrator
 from .providers import available_providers
 from .schemas import (
@@ -48,8 +49,17 @@ def create_app(settings: Settings) -> FastAPI:
         storage_path=storage_path,
         request_timeout_seconds=settings.mcp_request_timeout_seconds,
     )
+    router = None
+    if settings.mcp_router_enabled:
+        try:
+            router = MCPRouter(settings)
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize MCP router (%s). Falling back to heuristics.",
+                exc,
+            )
 
-    orchestrator = LangGraphOrchestrator(mcp_service=mcp_service)
+    orchestrator = LangGraphOrchestrator(mcp_service=mcp_service, router=router)
 
     @app.get("/health", response_model=HealthResponse, tags=["system"])
     async def health() -> HealthResponse:
