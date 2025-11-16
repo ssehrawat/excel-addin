@@ -12,8 +12,6 @@ import {
   RadioGroup,
   Tab,
   TabList,
-  TabPanel,
-  TabPanels,
   Text
 } from "@fluentui/react-components";
 import { useState } from "react";
@@ -78,48 +76,45 @@ export function SettingsDialog({
               <Tab value="providers">Providers</Tab>
               <Tab value="mcp">MCP servers</Tab>
             </TabList>
-            <TabPanels>
-              <TabPanel value="providers">
-                <Field label="Choose which backend provider should handle chat requests.">
-                  <RadioGroup
-                    value={selectedProvider}
-                    onChange={(_, data) => onSelect(data.value)}
-                  >
-                    {providers.map((provider) => (
-                      <Radio
-                        key={provider.id}
-                        value={provider.id}
-                        label={
-                          <div>
-                            <Text weight="semibold">{provider.label}</Text>
-                            <Text block size={200}>
-                              {provider.description}
+            {activeTab === "providers" ? (
+              <Field label="Choose which backend provider should handle chat requests.">
+                <RadioGroup
+                  value={selectedProvider}
+                  onChange={(_, data) => onSelect(data.value)}
+                >
+                  {providers.map((provider) => (
+                    <Radio
+                      key={provider.id}
+                      value={provider.id}
+                      label={
+                        <div>
+                          <Text weight="semibold">{provider.label}</Text>
+                          <Text block size={200}>
+                            {provider.description}
+                          </Text>
+                          {provider.requiresKey && (
+                            <Text block size={200} italic>
+                              Requires API key configured on backend.
                             </Text>
-                            {provider.requiresKey && (
-                              <Text block size={200} italic>
-                                Requires API key configured on backend.
-                              </Text>
-                            )}
-                          </div>
-                        }
-                      />
-                    ))}
-                  </RadioGroup>
-                </Field>
-              </TabPanel>
-              <TabPanel value="mcp">
-                <McpServersPanel
-                  servers={mcpServers}
-                  isLoading={mcpServersLoading}
-                  busyIds={mcpBusyIds}
-                  error={mcpError}
-                  onCreate={onCreateMcpServer}
-                  onToggle={onToggleMcpServer}
-                  onRefresh={onRefreshMcpServer}
-                  onDelete={onDeleteMcpServer}
-                />
-              </TabPanel>
-            </TabPanels>
+                          )}
+                        </div>
+                      }
+                    />
+                  ))}
+                </RadioGroup>
+              </Field>
+            ) : (
+              <McpServersPanel
+                servers={mcpServers}
+                isLoading={mcpServersLoading}
+                busyIds={mcpBusyIds}
+                error={mcpError}
+                onCreate={onCreateMcpServer}
+                onToggle={onToggleMcpServer}
+                onRefresh={onRefreshMcpServer}
+                onDelete={onDeleteMcpServer}
+              />
+            )}
           </DialogContent>
           <DialogActions>
             <DialogTrigger disableButtonEnhancement action="close">
