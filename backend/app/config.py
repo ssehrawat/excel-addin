@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
-    openai_temperature: Optional[float] = 1
+    openai_temperature: Optional[float] = 0.2
 
     anthropic_api_key: Optional[str] = None
     anthropic_model: str = "claude-3-5-sonnet-20240620"

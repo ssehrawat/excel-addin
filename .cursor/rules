@@ -25,6 +25,7 @@
 - Prefer ESLint and Prettier defaults defined in `.eslintrc.json` and project config.
 
 ## Git & Repo Hygiene
+- First get the changes in files reviewed by the user before commiting and pushing them to git repo.
 - Do not commit secrets or local environment files (`.env`, `manifest.md`, certs are ignored).
 - When adding dependencies, update respective lockfiles (`requirements.txt`, `package-lock.json`).
 - Document major changes in `README.md` or dedicated docs if added.
