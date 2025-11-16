@@ -3,6 +3,7 @@ frontend/dist/
 frontend/.parcel-cache/
 backend/app/__pycache__/
 backend/.venv/
+backend/app/data/
 __pycache__/
 *.pyc
 .env

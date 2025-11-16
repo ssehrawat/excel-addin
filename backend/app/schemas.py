@@ -137,6 +137,7 @@ class MCPServerPublic(BaseModel):
     status: Literal["online", "offline", "error", "unknown"] = "unknown"
     last_refreshed_at: Optional[str] = Field(default=None, alias="lastRefreshedAt")
     tools: List[MCPTool] = Field(default_factory=list)
+    protocol: Literal["auto", "rest", "mcp"] = "auto"
     created_at: Optional[str] = Field(default=None, alias="createdAt")
     updated_at: Optional[str] = Field(default=None, alias="updatedAt")
 
@@ -151,6 +152,7 @@ class MCPServerCreateRequest(BaseModel):
     api_key: Optional[str] = Field(default=None, alias="apiKey")
     enabled: bool = True
     auto_refresh: bool = Field(default=True, alias="autoRefresh")
+    protocol: Literal["auto", "rest", "mcp"] = "auto"
 
     class Config:
         populate_by_name = True
@@ -162,6 +164,7 @@ class MCPServerUpdateRequest(BaseModel):
     description: Optional[str] = None
     api_key: Optional[str] = Field(default=None, alias="apiKey")
     enabled: Optional[bool] = None
+    protocol: Optional[Literal["auto", "rest", "mcp"]] = None
 
     class Config:
         populate_by_name = True

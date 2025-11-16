@@ -96,6 +96,7 @@ export interface MCPServer {
   status: MCPServerStatus;
   lastRefreshedAt?: string | null;
   tools: MCPTool[];
+  protocol?: "auto" | "rest" | "mcp";
   createdAt?: string;
   updatedAt?: string;
 }
