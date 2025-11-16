@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field
 
 
 class MessageRole(str, Enum):
@@ -117,6 +117,62 @@ class ChatResponse(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class MCPTool(BaseModel):
+    name: str
+    description: Optional[str] = None
+    input_schema: Dict[str, Any] = Field(default_factory=dict, alias="inputSchema")
+
+    class Config:
+        populate_by_name = True
+
+
+class MCPServerPublic(BaseModel):
+    id: str
+    name: str
+    base_url: AnyHttpUrl = Field(..., alias="baseUrl")
+    description: Optional[str] = None
+    enabled: bool = True
+    status: Literal["online", "offline", "error", "unknown"] = "unknown"
+    last_refreshed_at: Optional[str] = Field(default=None, alias="lastRefreshedAt")
+    tools: List[MCPTool] = Field(default_factory=list)
+    created_at: Optional[str] = Field(default=None, alias="createdAt")
+    updated_at: Optional[str] = Field(default=None, alias="updatedAt")
+
+    class Config:
+        populate_by_name = True
+
+
+class MCPServerCreateRequest(BaseModel):
+    name: str
+    base_url: AnyHttpUrl = Field(..., alias="baseUrl")
+    description: Optional[str] = None
+    api_key: Optional[str] = Field(default=None, alias="apiKey")
+    enabled: bool = True
+    auto_refresh: bool = Field(default=True, alias="autoRefresh")
+
+    class Config:
+        populate_by_name = True
+
+
+class MCPServerUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    base_url: Optional[AnyHttpUrl] = Field(default=None, alias="baseUrl")
+    description: Optional[str] = None
+    api_key: Optional[str] = Field(default=None, alias="apiKey")
+    enabled: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
+
+
+class MCPServerResponse(BaseModel):
+    server: MCPServerPublic
+
+
+class MCPServerListResponse(BaseModel):
+    servers: List[MCPServerPublic]
 
 
 class ProvidersResponse(BaseModel):

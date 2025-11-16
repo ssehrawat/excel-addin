@@ -1,6 +1,6 @@
 /* global Office */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -18,7 +18,9 @@ import {
   CellUpdate,
   FormatUpdate,
   Telemetry,
-  ChatStreamEvent
+  ChatStreamEvent,
+  MCPServer,
+  CreateMCPServerPayload
 } from "./types";
 import {
   applyCellUpdates,
@@ -44,6 +46,10 @@ export function App() {
   const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
   const [providers, setProviders] =
     useState(FALLBACK_PROVIDERS);
+  const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
+  const [mcpServersLoading, setMcpServersLoading] = useState(false);
+  const [mcpBusyIds, setMcpBusyIds] = useState<string[]>([]);
+  const [mcpError, setMcpError] = useState<string | null>(null);
   useEffect(() => {
     const loadProviders = async () => {
       try {
@@ -70,6 +76,142 @@ export function App() {
     };
     void loadProviders();
   }, []);
+  const loadMcpServers = useCallback(async () => {
+    setMcpServersLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/mcp/servers`);
+      if (!res.ok) {
+        throw new Error(`Status ${res.status}`);
+      }
+      const data = await res.json();
+      if (Array.isArray(data.servers)) {
+        setMcpServers(data.servers);
+      }
+      setMcpError(null);
+    } catch (error) {
+      setMcpError(
+        error instanceof Error ? error.message : "Failed to load MCP servers"
+      );
+    } finally {
+      setMcpServersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMcpServers();
+  }, [loadMcpServers]);
+
+  const markMcpBusy = (id: string, busy: boolean) => {
+    setMcpBusyIds((prev) => {
+      if (busy) {
+        if (prev.includes(id)) {
+          return prev;
+        }
+        return [...prev, id];
+      }
+      return prev.filter((item) => item !== id);
+    });
+  };
+
+  const handleCreateMcpServer = async (
+    payload: CreateMCPServerPayload
+  ) => {
+    try {
+      setMcpError(null);
+      const res = await fetch(`${API_BASE_URL}/mcp/servers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Status ${res.status}`);
+      }
+      await loadMcpServers();
+    } catch (error) {
+      setMcpError(
+        error instanceof Error ? error.message : "Failed to save MCP server"
+      );
+    }
+  };
+
+  const handleToggleMcpServer = async (id: string, enabled: boolean) => {
+    markMcpBusy(id, true);
+    try {
+      setMcpError(null);
+      const res = await fetch(`${API_BASE_URL}/mcp/servers/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ enabled })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Status ${res.status}`);
+      }
+      await loadMcpServers();
+    } catch (error) {
+      setMcpError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update MCP server"
+      );
+    } finally {
+      markMcpBusy(id, false);
+    }
+  };
+
+  const handleRefreshMcpServer = async (id: string) => {
+    markMcpBusy(id, true);
+    try {
+      setMcpError(null);
+      const res = await fetch(
+        `${API_BASE_URL}/mcp/servers/${id}/refresh`,
+        {
+          method: "POST"
+        }
+      );
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Status ${res.status}`);
+      }
+      await loadMcpServers();
+    } catch (error) {
+      setMcpError(
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh MCP server"
+      );
+    } finally {
+      markMcpBusy(id, false);
+    }
+  };
+
+  const handleDeleteMcpServer = async (id: string) => {
+    markMcpBusy(id, true);
+    try {
+      setMcpError(null);
+      const res = await fetch(`${API_BASE_URL}/mcp/servers/${id}`, {
+        method: "DELETE"
+      });
+      if (!res.ok && res.status !== 204) {
+        const text = await res.text();
+        throw new Error(text || `Status ${res.status}`);
+      }
+      await loadMcpServers();
+    } catch (error) {
+      setMcpError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete MCP server"
+      );
+    } finally {
+      markMcpBusy(id, false);
+    }
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -313,6 +455,14 @@ export function App() {
         selectedProvider={provider}
         onSelect={(next) => setProvider(next)}
         onClose={() => setSettingsOpen(false)}
+        mcpServers={mcpServers}
+        mcpServersLoading={mcpServersLoading}
+        mcpBusyIds={mcpBusyIds}
+        mcpError={mcpError}
+        onCreateMcpServer={handleCreateMcpServer}
+        onToggleMcpServer={handleToggleMcpServer}
+        onRefreshMcpServer={handleRefreshMcpServer}
+        onDeleteMcpServer={handleDeleteMcpServer}
       />
     </FluentProvider>
   );

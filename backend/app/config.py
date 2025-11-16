@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     request_timeout_seconds: int = 120
     log_level: str = "INFO"
+    mcp_config_path: str = "data/mcp_servers.json"
+    mcp_request_timeout_seconds: int = 15
 
 
 @lru_cache(maxsize=1)

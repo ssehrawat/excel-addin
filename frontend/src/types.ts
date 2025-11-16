@@ -79,6 +79,44 @@ export interface ProviderOption {
   requiresKey: boolean;
 }
 
+export interface MCPTool {
+  name: string;
+  description?: string | null;
+  inputSchema?: Record<string, unknown>;
+}
+
+export type MCPServerStatus = "online" | "offline" | "error" | "unknown";
+
+export interface MCPServer {
+  id: string;
+  name: string;
+  baseUrl: string;
+  description?: string | null;
+  enabled: boolean;
+  status: MCPServerStatus;
+  lastRefreshedAt?: string | null;
+  tools: MCPTool[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateMCPServerPayload {
+  name: string;
+  baseUrl: string;
+  description?: string;
+  apiKey?: string;
+  enabled?: boolean;
+  autoRefresh?: boolean;
+}
+
+export interface UpdateMCPServerPayload {
+  name?: string;
+  baseUrl?: string;
+  description?: string;
+  apiKey?: string;
+  enabled?: boolean;
+}
+
 export interface Telemetry {
   latency_ms?: number;
   provider?: string;
