@@ -5,7 +5,7 @@ import json
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -116,9 +116,15 @@ def create_app(settings: Settings) -> FastAPI:
                 )
         return MCPServerResponse(server=mcp_service.to_public(record))
 
-    @app.delete("/mcp/servers/{server_id}", tags=["mcp"], status_code=204)
-    async def delete_mcp_server(server_id: str) -> None:
+    @app.delete(
+        "/mcp/servers/{server_id}",
+        tags=["mcp"],
+        status_code=204,
+        response_class=Response,
+    )
+    async def delete_mcp_server(server_id: str) -> Response:
         mcp_service.delete_server(server_id)
+        return Response(status_code=204)
 
     @app.post(
         "/mcp/servers/{server_id}/refresh",
