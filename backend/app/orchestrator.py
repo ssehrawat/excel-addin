@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from langgraph.graph import END, StateGraph
 
 from .mcp import MCPServerRecord, MCPServerService, ToolInvocationResult
+from .tool_args import ToolArgumentBuilder, ToolArgumentError
 from .router import MCPRouter, RouterSelection
 from .providers import (
     ProviderResult,
@@ -38,6 +39,7 @@ class PlannedToolCall:
     server: MCPServerRecord
     tool_name: str
     rationale: str
+    tool: MCPTool
 
 
 @dataclass
@@ -62,9 +64,11 @@ class LangGraphOrchestrator:
         self,
         mcp_service: Optional[MCPServerService] = None,
         router: Optional[MCPRouter] = None,
+        argument_builder: Optional[ToolArgumentBuilder] = None,
     ) -> None:
         self._mcp_service = mcp_service
         self._router = router
+        self._argument_builder = argument_builder
         self.graph = self._build_graph()
         self._compiled = self.graph.compile()
 
@@ -182,7 +186,10 @@ class LangGraphOrchestrator:
                 MessageKind.MESSAGE,
                 plan.clarification,
             )
-            yield {"type": "message", "payload": clarification.model_dump(by_alias=True)}
+            yield {
+                "type": "message",
+                "payload": clarification.model_dump(by_alias=True),
+            }
             yield {"type": "done"}
             return
 
@@ -420,6 +427,7 @@ class LangGraphOrchestrator:
                     server=server,
                     tool_name=tool.name,
                     rationale=selection.rationale or tool.description or "gather data",
+                    tool=tool,
                 )
             )
         return planned
@@ -450,6 +458,7 @@ class LangGraphOrchestrator:
                             server=server,
                             tool_name=tool.name,
                             rationale=rationale,
+                            tool=tool,
                         ),
                     )
                 )
@@ -463,9 +472,7 @@ class LangGraphOrchestrator:
         prompt = request.prompt.strip()
         tokens = [token for token in re.split(r"\W+", prompt) if token]
         if len(tokens) < 4 and not request.selection:
-            return (
-                "Could you provide a bit more detail so I can pick the right tools?"
-            )
+            return "Could you provide a bit more detail so I can pick the right tools?"
         return None
 
     def _score_tool(self, normalized_prompt: str, tool: MCPTool) -> int:
@@ -500,7 +507,38 @@ class LangGraphOrchestrator:
     ) -> ToolInvocationResult:
         if not self._mcp_service:
             raise HTTPException(status_code=503, detail="MCP service unavailable.")
+        arguments = await self._build_tool_arguments(call, request)
+        logger.info(
+            "Prepared MCP arguments for %s/%s: %s",
+            call.server.name,
+            call.tool_name,
+            json.dumps(arguments, ensure_ascii=False),
+        )
         payload = {
+            "arguments": arguments,
+            "context": self._build_tool_context(call, request),
+        }
+        result = await self._mcp_service.invoke_tool(
+            call.server.id,
+            call.tool_name,
+            payload,
+        )
+        try:
+            result_preview = json.dumps(result.response, ensure_ascii=False)
+        except (TypeError, ValueError):
+            result_preview = str(result.response)
+        logger.info(
+            "Tool %s/%s returned: %s",
+            call.server.name,
+            call.tool_name,
+            result_preview,
+        )
+        return result
+
+    def _build_tool_context(
+        self, call: PlannedToolCall, request: ChatRequest
+    ) -> Dict[str, Any]:
+        return {
             "prompt": request.prompt,
             "selection": [sel.model_dump(by_alias=True) for sel in request.selection],
             "metadata": request.metadata,
@@ -516,23 +554,187 @@ class LangGraphOrchestrator:
             "requestedAt": datetime.now(timezone.utc).isoformat(),
             "rationale": call.rationale,
         }
-        return await self._mcp_service.invoke_tool(
-            call.server.id,
-            call.tool_name,
-            payload,
-        )
+
+    async def _build_tool_arguments(
+        self, call: PlannedToolCall, request: ChatRequest
+    ) -> Dict[str, Any]:
+        if not self._argument_builder:
+            return {}
+        try:
+            return await self._argument_builder.build(call, request)
+        except ToolArgumentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     def _summarize_tool_result(self, invocation: ToolInvocationResult) -> str:
+        rows = self._extract_rows(invocation.response)
+        if rows:
+            table = self._render_table(rows[:10])
+            total = len(rows)
+            return (
+                f"Tool '{invocation.tool_name}' from {invocation.server_name} "
+                f"returned {total} document(s).\n\n{table}"
+            )
         try:
             serialized = json.dumps(invocation.response, ensure_ascii=False)
         except (TypeError, ValueError):
             serialized = str(invocation.response)
-        if len(serialized) > 600:
-            serialized = serialized[:600] + "…"
+        # Increase limit to 50000 characters to avoid truncating database results
+        if len(serialized) > 50000:
+            serialized = serialized[:50000] + "…"
         return (
             f"Tool '{invocation.tool_name}' from {invocation.server_name} returned:\n"
             f"{serialized}"
         )
+
+    def _extract_rows(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        structured = response.get("structuredContent")
+        if isinstance(structured, list):
+            logger.debug("Found structuredContent with %d items", len(structured))
+            for item in structured:
+                if isinstance(item, dict):
+                    rows.append(self._flatten_document(item))
+        content = response.get("content")
+        if isinstance(content, list):
+            logger.debug("Found content array with %d items", len(content))
+            for item in content:
+                text = item.get("text") if isinstance(item, dict) else None
+                if not text:
+                    continue
+                json_blob = self._extract_json_from_text(text)
+                if not json_blob:
+                    logger.debug("No JSON found in text item of length %d", len(text))
+                    continue
+                logger.debug("Extracted JSON blob of length %d", len(json_blob))
+                try:
+                    data = json.loads(json_blob)
+                except json.JSONDecodeError as e:
+                    logger.warning("Failed to parse JSON from text: %s", e)
+                    continue
+                if isinstance(data, list):
+                    logger.debug("Parsed JSON list with %d items", len(data))
+                    for doc in data:
+                        if isinstance(doc, dict):
+                            rows.append(self._flatten_document(doc))
+                elif isinstance(data, dict):
+                    logger.debug("Parsed single JSON object")
+                    rows.append(self._flatten_document(data))
+        logger.info("Extracted %d rows from tool response", len(rows))
+        return rows
+
+    def _extract_json_from_text(self, text: str) -> Optional[str]:
+        # Try to extract content from untrusted-user-data tags (with or without UUIDs)
+        match = re.search(
+            r"<untrusted-user-data[^>]*>(.*?)</untrusted-user-data[^>]*>",
+            text,
+            re.DOTALL,
+        )
+        if match:
+            candidate = match.group(1).strip()
+            logger.debug(
+                "Found content within untrusted-user-data tags, length: %d",
+                len(candidate),
+            )
+        else:
+            candidate = text.strip()
+            logger.debug("No untrusted-user-data tags found, using full text")
+
+        # Try to find balanced JSON structures
+        for opening, closing in (("[", "]"), ("{", "}")):
+            blob = self._find_balanced_segment(candidate, opening, closing)
+            if blob:
+                logger.debug("Found balanced %s...%s segment", opening, closing)
+                return blob
+
+        # Fallback: try JSON decoder
+        result = self._decode_json_fragment(candidate)
+        if result:
+            logger.debug("JSON decoder found fragment")
+        return result
+
+    def _find_balanced_segment(
+        self, text: str, opening: str, closing: str
+    ) -> Optional[str]:
+        start = text.find(opening)
+        while start != -1:
+            depth = 0
+            in_string = False
+            escape = False
+            for index in range(start, len(text)):
+                char = text[index]
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif char == "\\":
+                        escape = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+                if char == '"':
+                    in_string = True
+                    continue
+                if char == opening:
+                    depth += 1
+                elif char == closing:
+                    if depth == 0:
+                        break
+                    depth -= 1
+                    if depth == 0:
+                        return text[start : index + 1]
+            start = text.find(opening, start + 1)
+        return None
+
+    def _decode_json_fragment(self, text: str) -> Optional[str]:
+        decoder = json.JSONDecoder()
+        for opening in ("[", "{"):
+            index = text.find(opening)
+            while index != -1:
+                try:
+                    _, end = decoder.raw_decode(text[index:])
+                except json.JSONDecodeError:
+                    index = text.find(opening, index + 1)
+                    continue
+                return text[index : index + end]
+        return None
+
+    def _flatten_document(self, doc: Dict[str, Any]) -> Dict[str, Any]:
+        flat: Dict[str, Any] = {}
+        for key, value in doc.items():
+            flat[key] = self._stringify_value(value)
+        return flat
+
+    def _stringify_value(self, value: Any) -> str:
+        if isinstance(value, dict):
+            if "$date" in value:
+                return str(value["$date"])
+            if "$numberDouble" in value:
+                return value["$numberDouble"]
+            if "$oid" in value:
+                return value["$oid"]
+            return json.dumps(value, ensure_ascii=False)
+        if isinstance(value, list):
+            return ", ".join(self._stringify_value(item) for item in value)
+        return str(value)
+
+    def _render_table(self, rows: Sequence[Dict[str, Any]]) -> str:
+        headers: List[str] = []
+        for row in rows:
+            for key in row.keys():
+                if key not in headers:
+                    headers.append(key)
+        if not headers:
+            return ""
+        header_row = "| " + " | ".join(headers) + " |"
+        divider = "| " + " | ".join("---" for _ in headers) + " |"
+        lines = [header_row, divider]
+        for row in rows:
+            # Limit each cell value to 200 chars to prevent extremely wide tables
+            values = [str(row.get(header, ""))[:200] for header in headers]
+            lines.append("| " + " | ".join(values) + " |")
+        logger.debug(
+            "Rendered table with %d rows and %d columns", len(rows), len(headers)
+        )
+        return "\n".join(lines)
 
     def _merge_telemetry(
         self, telemetry: Optional[Telemetry], updates: Dict[str, Any]
