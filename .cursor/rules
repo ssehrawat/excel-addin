@@ -19,6 +19,23 @@
 - Use Office.js patterns already established in `excel.ts`; avoid blocking UI thread—delegate long tasks to backend.
 - npm scripts: `npm start` for dev, `npm run build` for production. Trust certificates using `npm run dev:cert` if HTTPS issues arise.
 
+## Documentation Standards
+- **All code must include production-level docstrings and comments.**
+- Python: Use Google-style or NumPy-style docstrings for all classes, functions, and methods. Include:
+  - Clear description of purpose
+  - Parameter types and descriptions (`Args:` section)
+  - Return type and description (`Returns:` section)
+  - Raises section for exceptions
+  - Examples for complex functions
+- TypeScript/JavaScript: Use JSDoc comments for all exported functions, classes, and interfaces. Include:
+  - `@description` for purpose
+  - `@param` with types for all parameters
+  - `@returns` with return type and description
+  - `@throws` for error conditions
+- Add inline comments for non-obvious logic, complex algorithms, business rules, and workarounds.
+- Document "why" not just "what" - explain reasoning behind implementation choices when non-trivial.
+- Keep comments up-to-date with code changes; remove outdated comments.
+
 ## Testing & Quality
 - Provide unit tests where feasible (Python: `pytest`; TypeScript: add tests under `frontend/src/__tests__` when necessary).
 - Maintain type hints across Python code, keep FastAPI response models explicit.

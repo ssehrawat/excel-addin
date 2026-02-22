@@ -9,7 +9,7 @@ class Settings(BaseSettings):
         env_prefix="COPILOT_", env_file=".env", env_file_encoding="utf-8"
     )
 
-    app_name: str = "Workbook Copilot Backend"
+    app_name: str = "MyExcelCompanion Backend"
     api_prefix: str = "/api"
 
     mock_provider_enabled: bool = True

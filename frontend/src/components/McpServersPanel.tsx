@@ -203,7 +203,7 @@ export function McpServersPanel({
         </div>
       ) : servers.length === 0 ? (
         <div className={styles.emptyState}>
-          No MCP servers configured yet. Add one to enrich Workbook Copilot with
+          No MCP servers configured yet. Add one to enrich MyExcelCompanion with
           your own tools.
         </div>
       ) : (

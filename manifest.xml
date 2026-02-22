@@ -5,13 +5,13 @@
   xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
   xsi:type="TaskPaneApp">
   <Id>da1ce2a6-80a8-488d-8185-e2ff1db19788</Id>
-  <Version>1.0.0.0</Version>
-  <ProviderName>Workbook Copilot</ProviderName>
+  <Version>1.0.0.3</Version>
+  <ProviderName>MyExcelCompanion</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Workbook Copilot" />
-  <Description DefaultValue="Chat with your Excel workbook using LangGraph-powered intelligence." />
-  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png" />
-  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-64.png" />
+  <DisplayName DefaultValue="MyExcelCompanion" />
+  <Description DefaultValue="Chat with your Excel Workbook using LLM powered intelligence." />
+  <IconUrl DefaultValue="https://localhost:3000/assets/lamp-icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/lamp-icon-64.png" />
   <SupportUrl DefaultValue="https://learn.microsoft.com/office/dev/add-ins/" />
   <AppDomains>
     <AppDomain>https://localhost:3000</AppDomain>
@@ -66,19 +66,19 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png" />
-        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png" />
-        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png" />
+        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/lamp-icon-16.png" />
+        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/lamp-icon-32.png" />
+        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/lamp-icon-80.png" />
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html" />
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="Tab.Label" DefaultValue="Copilot" />
-        <bt:String id="Button.Label" DefaultValue="Workbook Copilot" />
+        <bt:String id="Tab.Label" DefaultValue="MyExcelCompanion" />
+        <bt:String id="Button.Label" DefaultValue="MyExcelCompanion" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="Button.Tooltip" DefaultValue="Open the Workbook Copilot task pane." />
+        <bt:String id="Button.Tooltip" DefaultValue="Open the MyExcelCompanion task pane." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

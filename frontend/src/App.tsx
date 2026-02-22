@@ -41,6 +41,43 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   }
 ];
 
+async function readApiError(res: Response): Promise<string> {
+  try {
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const data = await res.json();
+      if (data && typeof data === "object") {
+        const maybeDetail = (data as any).detail;
+        if (typeof maybeDetail === "string" && maybeDetail.trim()) {
+          return maybeDetail;
+        }
+        const maybeMessage = (data as any).message;
+        if (typeof maybeMessage === "string" && maybeMessage.trim()) {
+          return maybeMessage;
+        }
+      }
+    }
+  } catch {
+    // ignore parse errors; we'll fall back to text
+  }
+  try {
+    const text = await res.text();
+    return text || `Status ${res.status}`;
+  } catch {
+    return `Status ${res.status}`;
+  }
+}
+
+function formatNetworkError(error: unknown, baseUrl: string): string {
+  if (error instanceof TypeError) {
+    const msg = error.message || "";
+    if (msg.toLowerCase().includes("fetch")) {
+      return `Could not reach the backend at ${baseUrl}. Ensure the backend is running and your localhost HTTPS certificate is trusted.`;
+    }
+  }
+  return error instanceof Error ? error.message : "Network error";
+}
+
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
@@ -55,7 +92,7 @@ export function App() {
       try {
         const res = await fetch(`${API_BASE_URL}/providers`);
         if (!res.ok) {
-          throw new Error(`Status ${res.status}`);
+          throw new Error(await readApiError(res));
         }
         const data = await res.json();
         if (Array.isArray(data.providers) && data.providers.length > 0) {
@@ -81,7 +118,7 @@ export function App() {
     try {
       const res = await fetch(`${API_BASE_URL}/mcp/servers`);
       if (!res.ok) {
-        throw new Error(`Status ${res.status}`);
+        throw new Error(await readApiError(res));
       }
       const data = await res.json();
       if (Array.isArray(data.servers)) {
@@ -89,9 +126,7 @@ export function App() {
       }
       setMcpError(null);
     } catch (error) {
-      setMcpError(
-        error instanceof Error ? error.message : "Failed to load MCP servers"
-      );
+      setMcpError(formatNetworkError(error, API_BASE_URL));
     } finally {
       setMcpServersLoading(false);
     }
@@ -126,14 +161,11 @@ export function App() {
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Status ${res.status}`);
+        throw new Error(await readApiError(res));
       }
       await loadMcpServers();
     } catch (error) {
-      setMcpError(
-        error instanceof Error ? error.message : "Failed to save MCP server"
-      );
+      setMcpError(formatNetworkError(error, API_BASE_URL));
     }
   };
 
@@ -149,16 +181,11 @@ export function App() {
         body: JSON.stringify({ enabled })
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Status ${res.status}`);
+        throw new Error(await readApiError(res));
       }
       await loadMcpServers();
     } catch (error) {
-      setMcpError(
-        error instanceof Error
-          ? error.message
-          : "Failed to update MCP server"
-      );
+      setMcpError(formatNetworkError(error, API_BASE_URL));
     } finally {
       markMcpBusy(id, false);
     }
@@ -175,16 +202,11 @@ export function App() {
         }
       );
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Status ${res.status}`);
+        throw new Error(await readApiError(res));
       }
       await loadMcpServers();
     } catch (error) {
-      setMcpError(
-        error instanceof Error
-          ? error.message
-          : "Failed to refresh MCP server"
-      );
+      setMcpError(formatNetworkError(error, API_BASE_URL));
     } finally {
       markMcpBusy(id, false);
     }
@@ -198,16 +220,11 @@ export function App() {
         method: "DELETE"
       });
       if (!res.ok && res.status !== 204) {
-        const text = await res.text();
-        throw new Error(text || `Status ${res.status}`);
+        throw new Error(await readApiError(res));
       }
       await loadMcpServers();
     } catch (error) {
-      setMcpError(
-        error instanceof Error
-          ? error.message
-          : "Failed to delete MCP server"
-      );
+      setMcpError(formatNetworkError(error, API_BASE_URL));
     } finally {
       markMcpBusy(id, false);
     }

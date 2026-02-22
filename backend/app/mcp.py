@@ -156,7 +156,7 @@ class JsonRpcSession:
 
 JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
-CLIENT_NAME = "Workbook Copilot"
+CLIENT_NAME = "MyExcelCompanion"
 CLIENT_VERSION = "0.1.0"
 
 
@@ -622,7 +622,10 @@ class MCPServerService:
                 if strategy == "rest":
                     result = await self._rest.invoke_tool(record, tool_name, payload)
                 else:
-                    result = await self._jsonrpc.invoke_tool(record, tool_name, payload)
+                    arguments = payload.get("arguments", payload)
+                    result = await self._jsonrpc.invoke_tool(
+                        record, tool_name, arguments
+                    )
                 return result, strategy
             except Exception as exc:
                 last_error = exc

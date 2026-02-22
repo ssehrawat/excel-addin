@@ -30,6 +30,11 @@ const useStyles = makeStyles({
     fontSize: "16px",
     fontWeight: 600
   },
+  headerBrand: {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px"
+  },
   messages: {
     flex: 1,
     overflowY: "auto",
@@ -104,7 +109,9 @@ export function ChatPanel({
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <div className={styles.headerTitle}>Workbook Copilot</div>
+        <div className={styles.headerBrand}>
+          <div className={styles.headerTitle}>Chat</div>
+        </div>
         <div style={{ display: "flex", gap: "8px" }}>
           {isBusy ? (
             <Spinner size="tiny" label="Thinking..." />

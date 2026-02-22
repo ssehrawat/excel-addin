@@ -236,7 +236,7 @@ class MockProvider:
                 id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.SUGGESTION,
-                content="Ask me to summarize a table, build a formula, or draft insights.",
+                content="Would you like me to summarize a table, build a formula, or draft insights?",
                 created_at=_timestamp(),
             )
         )
@@ -340,24 +340,32 @@ class OpenAIProvider:
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         system_prompt = (
-            "You are Workbook Copilot, an Excel-focused assistant. "
+            "You are MyExcelCompanion, an Excel-focused assistant. "
             "Respond with JSON containing exact keys: "
             "`thoughts` (array of strings), `steps` (array of strings), `answer` (string), "
-            "`suggestions` (array of strings), `cell_updates` (array of objects), "
+            "`suggestion` (single string - ONE best optional follow-up action), `cell_updates` (array of objects), "
             "`format_updates` (array of objects for formatting changes), and "
             "`chart_inserts` (array of objects describing charts to create). "
+            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
+            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
+            "use ONLY cell_updates to provide the data. Then suggest a chart or formatting in the suggestion field. "
             "Every cell update object MUST include: "
             "`address` (A1 notation, include worksheet like 'Sheet1!E7:E9' when known), "
             "`mode` ('replace' or 'append'), and `values` (a two-dimensional array of rows; "
             "wrap single rows like [['Header'], [123]]). "
             "Only use modes 'replace' or 'append'. Provide cell updates whenever data in Excel should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields such as "
-            "`fill_color`, `font_color`, `bold`, `italic`. "
+            "`fill_color`, `font_color`, `bold`, `italic`. Only include format_updates if explicitly requested. "
             "Every chart insert MUST include `chartType` (matching Excel.ChartType), `sourceAddress` "
             "(data range, include worksheet when known). Optional fields: `sourceWorksheet`, `destinationWorksheet`, "
             "`name`, `title`, `topLeftCell`, `bottomRightCell`, `seriesBy` ('auto' | 'rows' | 'columns'). "
             "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
             "do not return aliases like 'xlXYScatter' or 'Scatter'. "
+            "The suggestion field should contain ONLY ONE suggestion - the most relevant and useful next action "
+            "the user might want to take. Use this for charts/formatting when not explicitly requested. "
+            "Phrase it as an optional action that will NOT be executed automatically. "
+            "Examples: 'Would you like me to create a line chart from this data?', 'I could also format these cells "
+            "with conditional formatting if needed.' Do NOT act on suggestions automatically. "
             "Return strictly valid JSON with fully expanded arrays—never include formulas, code, or list comprehensions."
         )
 
@@ -456,21 +464,29 @@ class AnthropicProvider:
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         system_prompt = (
-            "You are Workbook Copilot, an Excel-focused assistant. "
-            "Respond with JSON containing keys thoughts, steps, answer, suggestions, cell_updates, format_updates. "
+            "You are MyExcelCompanion, an Excel-focused assistant. "
+            "Respond with JSON containing keys thoughts, steps, answer, suggestion, cell_updates, format_updates. "
+            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
+            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
+            "use ONLY cell_updates to provide the data. Then suggest a chart or formatting in the suggestion field. "
             "Every cell update object MUST include: "
             "`address` (A1 notation, include worksheet such as 'Sheet1!E7:E9'), "
             "`mode` ('replace' or 'append'), and `values` (two-dimensional array; wrap rows like "
             "[['Header'], [123]]). "
             "Only use modes 'replace' or 'append'. Provide cell updates whenever the workbook should change. "
             "Every format update MUST include `address`, optional `worksheet`, and formatting fields "
-            "like `fill_color`, `font_color`, `bold`, `italic`. "
-            "Include `chart_inserts` as an array when a chart should be created. Each chart insert object must include "
+            "like `fill_color`, `font_color`, `bold`, `italic`. Only include format_updates if explicitly requested. "
+            "Include `chart_inserts` as an array ONLY when the user explicitly requests a chart. Each chart insert object must include "
             "`chartType` (Excel.ChartType string) and `sourceAddress` (include worksheet when known). "
             "Optional fields: `sourceWorksheet`, `destinationWorksheet`, `name`, `title`, `topLeftCell`, `bottomRightCell`, "
             "`seriesBy` ('auto' | 'rows' | 'columns'). "
             "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
             "avoid aliases like 'xlXYScatter' or 'Scatter'. "
+            "The suggestion field should contain ONLY ONE suggestion - the most relevant and useful next action "
+            "the user might want to take. Use this for charts/formatting when not explicitly requested. "
+            "Phrase it as an optional action that will NOT be executed automatically. "
+            "Examples: 'Would you like me to create a line chart from this data?', 'I could also format these cells "
+            "with conditional formatting if needed.' Do NOT act on suggestions automatically. "
             "Return strictly valid JSON with fully enumerated arrays—no formulas, code, or list comprehensions."
         )
         messages = [
@@ -524,17 +540,41 @@ def build_prompt_payload(request: ChatRequest) -> str:
     selection_text = "\n".join(
         f"{sel.address}: {sel.values}" for sel in request.selection
     )
-    history = "\n".join(f"[{msg.role}] {msg.content}" for msg in request.messages[-6:])
+    history_messages: List[str] = []
+    tool_context_segments: List[str] = []
+    for msg in request.messages:
+        entry = f"[{msg.role}] {msg.content}"
+        if msg.kind == MessageKind.CONTEXT:
+            tool_context_segments.append(entry)
+        else:
+            history_messages.append(entry)
+
+    trimmed_history = "\n".join(history_messages[-6:])
+    context_block = "\n".join(tool_context_segments)
+    if trimmed_history and context_block:
+        history = f"{trimmed_history}\n\n[tool_context]\n{context_block}"
+    elif context_block:
+        history = context_block
+    else:
+        history = trimmed_history
     payload = {
         "conversation_history": history,
         "user_prompt": request.prompt,
         "selection": selection_text,
         "instructions": (
             "Provide JSON with keys: thoughts (array), steps (array), answer (string), "
-            "suggestions (array), cell_updates (array of {address, mode, values}), "
+            "suggestion (single string - ONE best optional follow-up action), cell_updates (array of {address, mode, values}), "
             "format_updates (array of {address, worksheet, fillColor, fontColor, bold, italic}), "
             "chart_inserts (array of {chartType, sourceAddress, sourceWorksheet?, "
             "destinationWorksheet?, name?, title?, topLeftCell?, bottomRightCell?, seriesBy?}). "
+            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
+            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
+            "provide ONLY cell_updates with the data, then suggest creating a chart in the suggestion field. "
+            "Conversation history often contains context messages generated from MCP tools (e.g., MongoDB query results). "
+            "Treat those context messages as authoritative data retrieved on your behalf and use them to build the answer "
+            "and populate cell_updates. Do not claim you lack database access when such context is present. "
+            "The suggestion should be the most relevant next action (e.g., creating a chart from the data), phrased as an optional request. "
+            "It will NOT be executed automatically - the user must explicitly request it. "
             "Use concise actionable language."
         ),
     }
@@ -568,7 +608,7 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
         "thoughts": ["Unable to parse model response."],
         "steps": [],
         "answer": content if isinstance(content, str) else "No answer produced.",
-        "suggestions": [],
+        "suggestion": "",
         "cell_updates": [],
         "format_updates": [],
         "chart_inserts": [],
@@ -579,11 +619,12 @@ def assemble_messages_from_payload(
     payload: Dict[str, Any], prompt: str
 ) -> List[ChatMessage]:
     messages: List[ChatMessage] = []
+
+    # Process thoughts, steps, and answer first
     for key, kind in [
         ("thoughts", MessageKind.THOUGHT),
         ("steps", MessageKind.STEP),
         ("answer", MessageKind.FINAL),
-        ("suggestions", MessageKind.SUGGESTION),
     ]:
         for item in _ensure_iterable(payload.get(key)):
             if not item:
@@ -597,6 +638,8 @@ def assemble_messages_from_payload(
                     created_at=_timestamp(),
                 )
             )
+
+    # Ensure we have a final answer
     if not any(msg.kind == MessageKind.FINAL for msg in messages):
         messages.append(
             ChatMessage(
@@ -607,6 +650,20 @@ def assemble_messages_from_payload(
                 created_at=_timestamp(),
             )
         )
+
+    # Add single suggestion at the end if present
+    suggestion = payload.get("suggestion")
+    if suggestion and str(suggestion).strip():
+        messages.append(
+            ChatMessage(
+                id=_message_id(),
+                role=MessageRole.ASSISTANT,
+                kind=MessageKind.SUGGESTION,
+                content=str(suggestion),
+                created_at=_timestamp(),
+            )
+        )
+
     return messages
 
 
@@ -702,9 +759,9 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
         source_worksheet = candidate.get("source_worksheet") or candidate.get(
             "sourceWorksheet"
         )
-        destination_worksheet = candidate.get(
-            "destination_worksheet"
-        ) or candidate.get("destinationWorksheet")
+        destination_worksheet = candidate.get("destination_worksheet") or candidate.get(
+            "destinationWorksheet"
+        )
         top_left_cell = candidate.get("top_left_cell") or candidate.get("topLeftCell")
         bottom_right_cell = candidate.get("bottom_right_cell") or candidate.get(
             "bottomRightCell"

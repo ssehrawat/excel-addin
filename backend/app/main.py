@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -24,11 +25,21 @@ from .schemas import (
     MCPServerUpdateRequest,
     ProvidersResponse,
 )
+from .tool_args import ToolArgumentBuilder
 
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging(settings: Settings) -> None:
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(level=level, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    for name in ("excel-addin", __name__):
+        logging.getLogger(name).setLevel(level)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+
 def create_app(settings: Settings) -> FastAPI:
+    _configure_logging(settings)
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
@@ -59,7 +70,11 @@ def create_app(settings: Settings) -> FastAPI:
                 exc,
             )
 
-    orchestrator = LangGraphOrchestrator(mcp_service=mcp_service, router=router)
+    argument_builder = ToolArgumentBuilder(settings)
+
+    orchestrator = LangGraphOrchestrator(
+        mcp_service=mcp_service, router=router, argument_builder=argument_builder
+    )
 
     @app.get("/health", response_model=HealthResponse, tags=["system"])
     async def health() -> HealthResponse:
