@@ -56,12 +56,58 @@ export interface ChartInsert {
   seriesBy?: ChartSeriesBy;
 }
 
+// ---------------------------------------------------------------------------
+// Workbook context types (new for refactor)
+// ---------------------------------------------------------------------------
+
+export interface SheetMetadata {
+  id: string;
+  name: string;
+  index: number;
+  maxRows: number;
+  maxColumns: number;
+}
+
+export interface WorkbookMetadata {
+  success: boolean;
+  fileName: string;
+  sheetsMetadata: SheetMetadata[];
+  totalSheets: number;
+}
+
+export interface UserContext {
+  currentActiveSheetName: string;
+  selectedRanges: string;
+}
+
+export interface WorkbookToolCall {
+  id: string;
+  tool: string;
+  args: Record<string, unknown>;
+}
+
+export interface WorkbookToolResult {
+  id: string;
+  tool: string;
+  result: unknown;
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Chat request / response
+// ---------------------------------------------------------------------------
+
 export interface ChatRequest {
   prompt: string;
   provider: string;
   messages: ChatMessage[];
   selection: CellSelection[];
   metadata?: Record<string, unknown>;
+  // Workbook context (new)
+  workbookMetadata?: WorkbookMetadata;
+  userContext?: UserContext;
+  activeSheetPreview?: string;
+  toolResults?: WorkbookToolResult[];
 }
 
 export interface ChatResponse {
@@ -136,6 +182,8 @@ export type ChatStreamEvent =
   | { type: "format_updates"; payload: FormatUpdate[] }
   | { type: "chart_inserts"; payload: ChartInsert[] }
   | { type: "telemetry"; payload: Telemetry | null }
+  | { type: "tool_call_required"; payload: WorkbookToolCall[] }
+  | { type: "status"; payload: string }
+  | { type: "suggestion"; payload: string }
   | { type: "done"; payload?: null }
   | { type: "error"; payload: { message: string } };
-

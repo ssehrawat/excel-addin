@@ -29,6 +29,7 @@ from .schemas import (
     MessageKind,
     MessageRole,
     Telemetry,
+    WorkbookToolResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,12 @@ class OrchestratorState(TypedDict, total=False):
 
 
 class LangGraphOrchestrator:
+    """Central orchestrator that manages MCP tools and LLM calls.
+
+    The streaming path (``stream()``) is the primary execution path used by
+    the frontend.  The LangGraph graph handles the non-streaming fallback.
+    """
+
     MAX_TOOL_CALLS = 3
 
     def __init__(
@@ -120,6 +127,14 @@ class LangGraphOrchestrator:
         return graph
 
     async def run(self, request: ChatRequest) -> ChatResponse:
+        """Non-streaming execution path.
+
+        Args:
+            request: The chat request.
+
+        Returns:
+            A complete ChatResponse.
+        """
         plan = await self._build_plan(request)
         pre_messages: List[ChatMessage] = []
         context_messages: List[ChatMessage] = []
@@ -132,14 +147,6 @@ class LangGraphOrchestrator:
             )
             pre_messages.append(clarification_message)
             return ChatResponse(messages=pre_messages)
-
-        if plan.steps:
-            pre_messages.append(
-                self._message(
-                    MessageKind.STEP,
-                    self._format_plan(plan.steps),
-                )
-            )
 
         if plan.tool_calls:
             (
@@ -168,89 +175,100 @@ class LangGraphOrchestrator:
         return response
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
+        """Streaming execution path used by the frontend.
+
+        Key behaviours:
+        - If ``request.tool_results`` is populated, inject them as LLM context
+          and skip MCP tool selection (the frontend already ran a tool round).
+        - MCP tools are invoked silently; progress is communicated via
+          ``status`` events rather than visible chat bubbles.
+        - THOUGHT / STEP / CONTEXT messages are never yielded to the client.
+        - When the LLM needs more Excel data, a ``tool_call_required`` event
+          is emitted and the stream terminates so the frontend can re-POST.
+
+        Args:
+            request: The incoming chat request.
+
+        Yields:
+            ProviderStreamEvent dicts.
+        """
         provider_id = request.provider.lower()
         started_at = time.time()
         telemetry_payload: Dict[str, Any] = {}
-        plan = await self._build_plan(request)
         context_messages: List[ChatMessage] = []
         mcp_telemetry: Dict[str, Any] = {}
 
-        placeholder = self._message(
-            MessageKind.THOUGHT,
-            "Analyzing your prompt…",
-        )
-        yield {"type": "message", "payload": placeholder.model_dump(by_alias=True)}
-
-        if plan.clarification:
-            clarification = self._message(
-                MessageKind.MESSAGE,
-                plan.clarification,
-            )
-            yield {
-                "type": "message",
-                "payload": clarification.model_dump(by_alias=True),
-            }
-            yield {"type": "done"}
-            return
-
-        if plan.steps:
-            plan_message = self._message(
-                MessageKind.STEP, self._format_plan(plan.steps)
-            )
-            yield {"type": "message", "payload": plan_message.model_dump(by_alias=True)}
-
-        if plan.tool_calls:
-            if self._mcp_service is None:
-                logger.warning("Plan requested MCP tools but no service is configured.")
-            else:
-                mcp_telemetry["mcpServersUsed"] = sorted(
-                    {call.server.id for call in plan.tool_calls}
+        # --- Case 1: frontend returned Excel tool results ---
+        if request.tool_results:
+            for tool_result in request.tool_results:
+                summary = self._summarize_workbook_tool_result(tool_result)
+                context_messages.append(
+                    self._message(MessageKind.CONTEXT, summary, role=MessageRole.SYSTEM)
                 )
-                for call in plan.tool_calls:
-                    start_msg = self._message(
-                        MessageKind.THOUGHT,
-                        (
-                            f"Calling MCP tool '{call.tool_name}' "
-                            f"via {call.server.name}: {call.rationale}"
-                        ),
-                    )
-                    yield {
-                        "type": "message",
-                        "payload": start_msg.model_dump(by_alias=True),
-                    }
+        else:
+            # --- Case 2: normal flow — check MCP tools ---
+            plan = await self._build_plan(request)
 
-                    try:
-                        invocation = await self._invoke_tool(call, request)
-                    except HTTPException as exc:  # pragma: no cover - surface error
-                        error_msg = self._message(
-                            MessageKind.STEP,
-                            f"Failed to use {call.tool_name}: {exc.detail}",
-                        )
+            if plan.clarification:
+                clarification = self._message(MessageKind.MESSAGE, plan.clarification)
+                yield {
+                    "type": "message_start",
+                    "payload": {
+                        **clarification.model_dump(by_alias=True),
+                        "content": "",
+                    },
+                }
+                yield {
+                    "type": "message_delta",
+                    "payload": {"id": clarification.id, "delta": clarification.content},
+                }
+                yield {
+                    "type": "message_done",
+                    "payload": clarification.model_dump(by_alias=True),
+                }
+                yield {"type": "done"}
+                return
+
+            if plan.tool_calls:
+                if self._mcp_service is None:
+                    logger.warning(
+                        "Plan requested MCP tools but no service is configured."
+                    )
+                else:
+                    mcp_telemetry["mcpServersUsed"] = sorted(
+                        {call.server.id for call in plan.tool_calls}
+                    )
+                    for call in plan.tool_calls:
+                        # Emit ephemeral status — not a chat bubble
                         yield {
-                            "type": "message",
-                            "payload": error_msg.model_dump(by_alias=True),
+                            "type": "status",
+                            "payload": f"Calling {call.tool_name}…",
                         }
-                        continue
+                        try:
+                            invocation = await self._invoke_tool(call, request)
+                        except HTTPException as exc:
+                            logger.warning(
+                                "Failed to invoke MCP tool '%s': %s",
+                                call.tool_name,
+                                exc.detail,
+                            )
+                            continue
 
-                    summary_text = self._summarize_tool_result(invocation)
-                    user_summary = self._message(MessageKind.CONTEXT, summary_text)
-                    yield {
-                        "type": "message",
-                        "payload": user_summary.model_dump(by_alias=True),
-                    }
-                    context_messages.append(
-                        self._message(
-                            MessageKind.CONTEXT,
-                            summary_text,
-                            role=MessageRole.SYSTEM,
+                        summary_text = self._summarize_tool_result(invocation)
+                        # Inject as system context — not shown in UI
+                        context_messages.append(
+                            self._message(
+                                MessageKind.CONTEXT,
+                                summary_text,
+                                role=MessageRole.SYSTEM,
+                            )
                         )
-                    )
-                    mcp_telemetry.setdefault("mcpTools", []).append(
-                        {
-                            "server": call.server.name,
-                            "tool": call.tool_name,
-                        }
-                    )
+                        mcp_telemetry.setdefault("mcpTools", []).append(
+                            {
+                                "server": call.server.name,
+                                "tool": call.tool_name,
+                            }
+                        )
 
         augmented_request = self._augment_request(request, context_messages)
 
@@ -258,10 +276,7 @@ class LangGraphOrchestrator:
             provider = create_provider(provider_id)
         except Exception as exc:  # pragma: no cover
             logger.exception("Failed to initialize provider '%s'", provider_id)
-            yield {
-                "type": "error",
-                "payload": {"message": str(exc)},
-            }
+            yield {"type": "error", "payload": {"message": str(exc)}}
             return
 
         try:
@@ -278,10 +293,7 @@ class LangGraphOrchestrator:
             logger.exception(
                 "Error while streaming response from provider '%s'", provider_id
             )
-            yield {
-                "type": "error",
-                "payload": {"message": str(exc)},
-            }
+            yield {"type": "error", "payload": {"message": str(exc)}}
             return
 
         latency_ms = (time.time() - started_at) * 1000
@@ -294,6 +306,29 @@ class LangGraphOrchestrator:
 
         yield {"type": "telemetry", "payload": telemetry}
         yield {"type": "done"}
+
+    def _summarize_workbook_tool_result(self, result: WorkbookToolResult) -> str:
+        """Format a WorkbookToolResult for injection into the LLM context.
+
+        Args:
+            result: A tool result returned by the frontend.
+
+        Returns:
+            Markdown-formatted summary string.
+        """
+        if result.error:
+            return (
+                f"Excel tool '{result.tool}' returned an error: {result.error}"
+            )
+        try:
+            serialized = json.dumps(result.result, ensure_ascii=False)
+        except (TypeError, ValueError):
+            serialized = str(result.result)
+        if len(serialized) > 50000:
+            serialized = serialized[:50000] + "…"
+        return (
+            f"Excel tool '{result.tool}' returned:\n{serialized}"
+        )
 
     async def _execute_tool_calls(
         self,
@@ -309,15 +344,6 @@ class LangGraphOrchestrator:
         telemetry_updates["mcpTools"] = []
 
         for call in tool_calls[: self.MAX_TOOL_CALLS]:
-            start_msg = self._message(
-                MessageKind.THOUGHT,
-                (
-                    f"Calling MCP tool '{call.tool_name}' "
-                    f"via {call.server.name}: {call.rationale}"
-                ),
-            )
-            user_messages.append(start_msg)
-
             try:
                 invocation = await self._invoke_tool(call, request)
             except HTTPException as exc:
@@ -329,8 +355,6 @@ class LangGraphOrchestrator:
                 continue
 
             summary = self._summarize_tool_result(invocation)
-            user_summary = self._message(MessageKind.CONTEXT, summary)
-            user_messages.append(user_summary)
             context_messages.append(
                 self._message(
                     MessageKind.CONTEXT,
@@ -353,39 +377,26 @@ class LangGraphOrchestrator:
         return request.model_copy(update={"messages": augmented_messages})
 
     async def _build_plan(self, request: ChatRequest) -> PlanResult:
+        """Decide which MCP tools (if any) to invoke before calling the LLM.
+
+        Args:
+            request: The incoming chat request.
+
+        Returns:
+            PlanResult with optional MCP tool calls and clarification text.
+        """
         if not self._mcp_service:
-            return PlanResult(
-                steps=[
-                    "Review the latest user prompt and workbook context.",
-                    "Use the selected LLM provider directly.",
-                ]
-            )
+            return PlanResult()
         servers = self._mcp_service.list_enabled_records()
         if not servers:
-            return PlanResult(
-                steps=[
-                    "Review the latest user prompt and workbook context.",
-                    "Use the selected LLM provider directly.",
-                ]
-            )
+            return PlanResult()
         clarification = self._needs_clarification(request)
         if clarification:
             return PlanResult(clarification=clarification)
 
         prompt = request.prompt.strip()
-        steps = ["Review the latest user prompt and workbook context."]
         tool_calls = await self._select_tools(prompt, servers)
-
-        if tool_calls:
-            for call in tool_calls:
-                steps.append(
-                    f"Use {call.tool_name} via {call.server.name} to {call.rationale}."
-                )
-            steps.append("Combine results with the selected LLM provider.")
-        else:
-            steps.append("Use the selected LLM provider directly.")
-
-        return PlanResult(steps=steps, tool_calls=tool_calls)
+        return PlanResult(tool_calls=tool_calls)
 
     async def _select_tools(
         self, prompt: str, servers: Sequence[MCPServerRecord]
@@ -464,9 +475,6 @@ class LangGraphOrchestrator:
                 )
         candidates.sort(key=lambda item: item[0], reverse=True)
         return [item[1] for item in candidates[: self.MAX_TOOL_CALLS]]
-
-    def _format_plan(self, steps: Sequence[str]) -> str:
-        return "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(steps))
 
     def _needs_clarification(self, request: ChatRequest) -> Optional[str]:
         prompt = request.prompt.strip()
@@ -578,7 +586,6 @@ class LangGraphOrchestrator:
             serialized = json.dumps(invocation.response, ensure_ascii=False)
         except (TypeError, ValueError):
             serialized = str(invocation.response)
-        # Increase limit to 50000 characters to avoid truncating database results
         if len(serialized) > 50000:
             serialized = serialized[:50000] + "…"
         return (
@@ -623,7 +630,6 @@ class LangGraphOrchestrator:
         return rows
 
     def _extract_json_from_text(self, text: str) -> Optional[str]:
-        # Try to extract content from untrusted-user-data tags (with or without UUIDs)
         match = re.search(
             r"<untrusted-user-data[^>]*>(.*?)</untrusted-user-data[^>]*>",
             text,
@@ -639,14 +645,12 @@ class LangGraphOrchestrator:
             candidate = text.strip()
             logger.debug("No untrusted-user-data tags found, using full text")
 
-        # Try to find balanced JSON structures
         for opening, closing in (("[", "]"), ("{", "}")):
             blob = self._find_balanced_segment(candidate, opening, closing)
             if blob:
                 logger.debug("Found balanced %s...%s segment", opening, closing)
                 return blob
 
-        # Fallback: try JSON decoder
         result = self._decode_json_fragment(candidate)
         if result:
             logger.debug("JSON decoder found fragment")
@@ -685,13 +689,14 @@ class LangGraphOrchestrator:
         return None
 
     def _decode_json_fragment(self, text: str) -> Optional[str]:
-        decoder = json.JSONDecoder()
+        import json as _json
+        decoder = _json.JSONDecoder()
         for opening in ("[", "{"):
             index = text.find(opening)
             while index != -1:
                 try:
                     _, end = decoder.raw_decode(text[index:])
-                except json.JSONDecodeError:
+                except _json.JSONDecodeError:
                     index = text.find(opening, index + 1)
                     continue
                 return text[index : index + end]
@@ -728,7 +733,6 @@ class LangGraphOrchestrator:
         divider = "| " + " | ".join("---" for _ in headers) + " |"
         lines = [header_row, divider]
         for row in rows:
-            # Limit each cell value to 200 chars to prevent extremely wide tables
             values = [str(row.get(header, ""))[:200] for header in headers]
             lines.append("| " + " | ".join(values) + " |")
         logger.debug(
