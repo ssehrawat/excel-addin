@@ -247,6 +247,29 @@ export function App() {
     }
   };
 
+  /**
+   * Opens the settings dialog and immediately triggers a concurrent refresh
+   * of all enabled MCP servers so the status badges reflect current reachability
+   * rather than the last persisted value.
+   *
+   * The dialog opens synchronously; refreshes run in the background and
+   * the server list is reloaded once all settle. Per-server failures are
+   * silently swallowed so a single offline server cannot block the UI.
+   */
+  const handleOpenSettings = useCallback(async () => {
+    setSettingsOpen(true);
+    // Refresh all enabled servers concurrently so status badges reflect reality.
+    const enabledServers = mcpServers.filter((s) => s.enabled);
+    if (enabledServers.length === 0) return;
+    await Promise.allSettled(
+      enabledServers.map((s) =>
+        fetch(`${API_BASE_URL}/mcp/servers/${s.id}/refresh`, { method: "POST" })
+          .catch(() => {})
+      )
+    );
+    await loadMcpServers();
+  }, [mcpServers, loadMcpServers]);
+
   const handleDeleteMcpServer = async (id: string) => {
     markMcpBusy(id, true);
     try {
@@ -596,7 +619,7 @@ export function App() {
         statusText={statusText}
         suggestion={suggestion}
         onSend={handleSend}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={handleOpenSettings}
       />
       <SettingsDialog
         open={settingsOpen}

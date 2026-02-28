@@ -62,52 +62,126 @@ CHART_TYPE_ALIASES: Dict[str, str] = {
     "bar": "BarClustered",
 }
 
-# Shared system prompt for all real LLM providers
-WORKBOOK_COPILOT_SYSTEM_PROMPT = (
-    "You are Workbook Copilot, an AI assistant for Microsoft Excel.\n\n"
-    "You receive structured context:\n"
-    "- workbook_metadata: Filename, all sheets with row/column dimensions\n"
-    "- user_context: Active sheet name, currently selected range address\n"
-    "- active_sheet_preview: First rows of active sheet as CSV (may be truncated)\n"
-    "- selection: Values of cells the user has explicitly selected\n\n"
-    "EXCEL TOOLS (request when you need more data):\n"
-    "- get_xl_cell_ranges: Read specific ranges with formulas and formatting. "
-    "Args: {ranges: [\"A1:C10\"], sheetName: \"Sheet1\"}\n"
-    "- get_xl_range_as_csv: Read large data ranges as CSV. "
-    "Args: {sheetName: \"Sheet1\", range: \"A1:D200\", maxRows: 200, offset: 0}\n"
-    "- xl_search_data: Find values across sheets. "
-    "Args: {query: \"...\", sheetName?: \"Sheet1\", caseSensitive?: false, "
-    "regex?: false, matchEntireCell?: false}\n"
-    "- get_all_xl_objects: List charts/tables/pivot tables. "
-    "Args: {sheetName?: \"Sheet1\", objectType?: \"chart\"|\"table\"|\"pivot\"}\n"
-    "- execute_xl_office_js: Run Office.js code snippet for specialized reads. "
-    "Args: {code: \"...\"}\n\n"
-    "DECISION RULES:\n"
-    "- If the question can be answered from provided context → answer directly\n"
-    "- If you need more data → return a needs_data response "
-    "(one tool call per response, max 3 rounds total)\n"
-    "- Prefer get_xl_range_as_csv for data analysis; "
-    "get_xl_cell_ranges for formula/format inspection\n"
-    "- For large sheets (> 200 rows), use offset pagination or xl_search_data first\n\n"
-    "RESPONSE FORMAT — Option A (direct answer):\n"
-    "{\"answer\": \"...\", \"cell_updates\": [...], \"format_updates\": [...], "
-    "\"chart_inserts\": [...], \"suggestion\": \"...\"}\n\n"
-    "RESPONSE FORMAT — Option B (needs more data):\n"
-    "{\"needs_data\": true, \"tool_call\": "
-    "{\"tool\": \"get_xl_range_as_csv\", \"args\": {\"sheetName\": \"Sheet1\", "
-    "\"range\": \"A1:D200\", \"maxRows\": 200}}}\n\n"
-    "RULES FOR CELL UPDATES:\n"
-    "Every cell update MUST include: `address` (A1 notation, include worksheet like "
-    "'Sheet1!E7:E9' when known), `mode` ('replace' or 'append'), and `values` "
-    "(two-dimensional array; wrap single rows like [[\"Header\"], [123]]).\n"
-    "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
-    "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
-    "Every chart insert MUST include `chartType` (Excel.ChartType) and `sourceAddress`. "
-    "Use official identifiers like 'XYScatter', 'ColumnClustered', 'LineMarkers'.\n"
-    "SUGGESTION FIELD: ONE optional follow-up action, phrased as a question. "
-    "It will NOT execute automatically.\n"
-    "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
-)
+
+@dataclass
+class MCPToolEntry:
+    """A live MCP tool available for the current request.
+
+    Instances are created by the orchestrator's per-request health check and
+    injected into the system prompt so the LLM can select and call them.
+
+    Attributes:
+        namespaced_name: Unique tool identifier used in LLM tool_call responses.
+            Format: ``mcp__{server_id}__{tool_name}``.
+        server_id: ID of the owning MCPServerRecord.
+        server_name: Human-readable server name shown in status events.
+        description: Tool description injected verbatim into the system prompt.
+        input_schema: JSON Schema dict describing the tool's accepted arguments.
+    """
+
+    namespaced_name: str
+    server_id: str
+    server_name: str
+    description: str
+    input_schema: Dict[str, Any]
+
+
+def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
+    """Build the LLM system prompt, dynamically including live MCP tools.
+
+    Generates a complete system prompt that lists all available tools
+    (always Excel tools, plus any live MCP tools for this request). The
+    DECISION RULES section explicitly instructs the LLM to use tools only
+    when they directly help answer the query.
+
+    Args:
+        mcp_tools: Live MCP tools from the orchestrator's health check.
+            When empty, the ``EXTERNAL MCP TOOLS`` section is omitted
+            entirely so the LLM does not attempt MCP calls.
+
+    Returns:
+        Complete system prompt string ready to send as the ``system``
+        role message to the LLM.
+    """
+    parts: List[str] = [
+        "You are Workbook Copilot, an AI assistant for Microsoft Excel.\n\n"
+        "You receive structured context:\n"
+        "- workbook_metadata: Filename, all sheets with row/column dimensions\n"
+        "- user_context: Active sheet name, currently selected range address\n"
+        "- active_sheet_preview: First rows of active sheet as CSV (may be truncated)\n"
+        "- selection: Values of cells the user has explicitly selected\n\n",
+        "EXCEL TOOLS (request when you need more data):\n"
+        "- get_xl_cell_ranges: Read specific ranges with formulas and formatting. "
+        "Args: {ranges: [\"A1:C10\"], sheetName: \"Sheet1\"}\n"
+        "- get_xl_range_as_csv: Read large data ranges as CSV. "
+        "Args: {sheetName: \"Sheet1\", range: \"A1:D200\", maxRows: 200, offset: 0}\n"
+        "- xl_search_data: Find values across sheets. "
+        "Args: {query: \"...\", sheetName?: \"Sheet1\", caseSensitive?: false, "
+        "regex?: false, matchEntireCell?: false}\n"
+        "- get_all_xl_objects: List charts/tables/pivot tables. "
+        "Args: {sheetName?: \"Sheet1\", objectType?: \"chart\"|\"table\"|\"pivot\"}\n"
+        "- execute_xl_office_js: Run Office.js code snippet for specialized reads. "
+        "Args: {code: \"...\"}\n\n",
+    ]
+
+    if mcp_tools:
+        mcp_lines = [
+            "EXTERNAL MCP TOOLS (call when they provide relevant external data):\n"
+        ]
+        for tool in mcp_tools:
+            schema_str = json.dumps(tool.input_schema)
+            mcp_lines.append(
+                f"- {tool.namespaced_name}: [{tool.server_name}] {tool.description}\n"
+                f"  Args schema: {schema_str}"
+            )
+        parts.append("\n".join(mcp_lines) + "\n\n")
+
+    parts.append(
+        "DECISION RULES:\n"
+        "- If the question can be answered from provided context → answer directly\n"
+        "- If you need more data → return a needs_data response "
+        "(one tool call per response, max 3 rounds total)\n"
+        "- Prefer get_xl_range_as_csv for data analysis; "
+        "get_xl_cell_ranges for formula/format inspection\n"
+        "- For large sheets (> 200 rows), use offset pagination or xl_search_data first\n"
+        "- Use MCP tools only when they provide relevant external data for the query. "
+        "Do NOT use tools unless they directly help answer the user's question.\n\n"
+    )
+
+    option_b = (
+        "{\"needs_data\": true, \"tool_call\": "
+        "{\"tool\": \"get_xl_range_as_csv\", \"args\": {\"sheetName\": \"Sheet1\", "
+        "\"range\": \"A1:D200\", \"maxRows\": 200}}}"
+    )
+    if mcp_tools:
+        option_b += (
+            "\n  — or MCP tool:\n"
+            "{\"needs_data\": true, \"tool_call\": "
+            "{\"tool\": \"mcp__<server_id>__<tool_name>\", \"args\": {...}}}"
+        )
+
+    parts.append(
+        "RESPONSE FORMAT — Option A (direct answer):\n"
+        "{\"answer\": \"...\", \"cell_updates\": [...], \"format_updates\": [...], "
+        "\"chart_inserts\": [...], \"suggestion\": \"...\"}\n\n"
+        f"RESPONSE FORMAT — Option B (needs more data):\n{option_b}\n\n"
+    )
+
+    parts.append(
+        "RULES FOR CELL UPDATES:\n"
+        "Every cell update MUST include: `address` (A1 notation, include worksheet like "
+        "'Sheet1!E7:E9' when known), `mode` ('replace' or 'append'), and `values` "
+        "(two-dimensional array; wrap single rows like [[\"Header\"], [123]]).\n"
+        "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
+        "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
+        "Every chart insert MUST include `chartType` (Excel.ChartType) and `sourceAddress`. "
+        "Use official identifiers like 'XYScatter', 'ColumnClustered', 'LineMarkers'.\n"
+        "SUGGESTION FIELD: ONE optional follow-up action, phrased as a question. "
+        "It will NOT execute automatically.\n"
+        "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
+    )
+
+    return "".join(parts)
 
 
 def _timestamp() -> str:
@@ -267,6 +341,10 @@ class LLMProvider(Protocol):
         self, request: ChatRequest
     ) -> AsyncIterator[ProviderStreamEvent]: ...
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]: ...
+
 
 class MockProvider:
     id = "mock"
@@ -363,6 +441,25 @@ class MockProvider:
         async for event in _stream_result(result):
             yield event
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, suggestion, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
+        async for event in _stream_result(result):
+            yield event
+
 
 class OpenAIProvider:
     id = "openai"
@@ -370,7 +467,7 @@ class OpenAIProvider:
     description = "Leverage OpenAI models such as GPT-4o."
     requires_key = True
 
-    def __init__(self) -> None:
+    def __init__(self, mcp_tools: Optional[List[MCPToolEntry]] = None) -> None:
         settings = get_settings()
         self.api_key = settings.openai_api_key
         self.model = settings.openai_model
@@ -389,6 +486,7 @@ class OpenAIProvider:
             ) from exc
 
         self._settings = settings
+        self._system_prompt = build_system_prompt(mcp_tools or [])
         self._json_mode_enabled = True
         self._client = self._instantiate_openai_client(json_mode=True)
 
@@ -410,7 +508,7 @@ class OpenAIProvider:
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         messages = [
-            {"role": "system", "content": WORKBOOK_COPILOT_SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": build_prompt_payload(request)},
         ]
 
@@ -435,7 +533,7 @@ class OpenAIProvider:
             raw={"openai_response": getattr(result, "response_metadata", {})},
         )
 
-        # Handle needs_data response (LLM requests more Excel data)
+        # Handle needs_data response (LLM requests more data via tool call)
         if parsed.get("needs_data") and parsed.get("tool_call"):
             tool_call = _build_tool_call(parsed["tool_call"])
             if tool_call:
@@ -463,6 +561,25 @@ class OpenAIProvider:
         async for event in _stream_result(result):
             yield event
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, suggestion, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
+        async for event in _stream_result(result):
+            yield event
+
 
 class AnthropicProvider:
     id = "anthropic"
@@ -470,7 +587,7 @@ class AnthropicProvider:
     description = "Access Claude models via Anthropic API."
     requires_key = True
 
-    def __init__(self) -> None:
+    def __init__(self, mcp_tools: Optional[List[MCPToolEntry]] = None) -> None:
         settings = get_settings()
         self.api_key = settings.anthropic_api_key
         self.model = settings.anthropic_model
@@ -489,6 +606,7 @@ class AnthropicProvider:
             ) from exc
 
         self._settings = settings
+        self._system_prompt = build_system_prompt(mcp_tools or [])
         self._json_mode_enabled = True
         self._client = self._instantiate_anthropic_client(json_mode=True)
 
@@ -512,7 +630,7 @@ class AnthropicProvider:
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
         messages = [
-            {"role": "system", "content": WORKBOOK_COPILOT_SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": build_prompt_payload(request)},
         ]
 
@@ -537,7 +655,7 @@ class AnthropicProvider:
             raw={"anthropic_response": getattr(result, "response_metadata", {})},
         )
 
-        # Handle needs_data response (LLM requests more Excel data)
+        # Handle needs_data response (LLM requests more data via tool call)
         if parsed.get("needs_data") and parsed.get("tool_call"):
             tool_call = _build_tool_call(parsed["tool_call"])
             if tool_call:
@@ -562,6 +680,25 @@ class AnthropicProvider:
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
         result = await self.generate(request)
+        async for event in _stream_result(result):
+            yield event
+
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, suggestion, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
         async for event in _stream_result(result):
             yield event
 
@@ -620,6 +757,10 @@ def build_prompt_payload(request: ChatRequest) -> str:
 
 def _build_tool_call(raw: Any) -> Optional[WorkbookToolCall]:
     """Build a WorkbookToolCall from the LLM's needs_data tool_call dict.
+
+    The ``tool`` field may contain an MCP-namespaced tool name in the format
+    ``mcp__<server_id>__<tool_name>``. The orchestrator routes based on this
+    prefix — no additional schema fields are needed.
 
     Args:
         raw: The raw ``tool_call`` value from the LLM response.
@@ -926,17 +1067,23 @@ def available_providers() -> List[Dict[str, Any]]:
     return providers
 
 
-def create_provider(provider_id: str) -> LLMProvider:
-    """Instantiate an LLM provider by ID.
+def create_provider(
+    provider_id: str,
+    mcp_tools: Optional[List[MCPToolEntry]] = None,
+) -> LLMProvider:
+    """Instantiate an LLM provider by ID, injecting live MCP tools.
 
     Args:
-        provider_id: Provider identifier string.
+        provider_id: Provider identifier string (e.g. ``"openai"``).
+        mcp_tools: Live MCP tools from the orchestrator's health check.
+            Passed to the provider constructor to build the dynamic system
+            prompt. Defaults to ``None`` (treated as empty list).
 
     Returns:
-        An LLMProvider instance.
+        An ``LLMProvider`` instance configured with the given tools.
 
     Raises:
-        HTTPException: 400 if the provider is unknown or disabled.
+        HTTPException: 400 if the provider ID is unknown or disabled.
     """
     provider_id = provider_id.lower()
     if provider_id == MockProvider.id:
@@ -946,7 +1093,7 @@ def create_provider(provider_id: str) -> LLMProvider:
             )
         return MockProvider()
     if provider_id == OpenAIProvider.id:
-        return OpenAIProvider()
+        return OpenAIProvider(mcp_tools=mcp_tools)
     if provider_id == AnthropicProvider.id:
-        return AnthropicProvider()
+        return AnthropicProvider(mcp_tools=mcp_tools)
     raise HTTPException(status_code=400, detail=f"Unknown provider '{provider_id}'.")

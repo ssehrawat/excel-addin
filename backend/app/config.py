@@ -6,7 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="COPILOT_", env_file=".env", env_file_encoding="utf-8"
+        env_prefix="COPILOT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     app_name: str = "MyExcelCompanion Backend"
@@ -26,10 +29,6 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     mcp_config_path: str = "data/mcp_servers.json"
     mcp_request_timeout_seconds: int = 15
-    mcp_router_enabled: bool = False
-    mcp_router_provider: str = "openai"
-    mcp_router_model: str = "gpt-4o-mini"
-    mcp_router_temperature: float = 0.0
 
 
 @lru_cache(maxsize=1)

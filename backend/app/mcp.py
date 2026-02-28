@@ -513,6 +513,30 @@ class MCPServerService:
         self._store.save(next_records)
         logger.info("Deleted MCP server %s", server_id)
 
+    async def fetch_tools_live(self, server: MCPServerRecord) -> List[MCPTool]:
+        """Fetch tools from an MCP server without persisting the result.
+
+        Unlike ``refresh_server()``, this method does NOT update
+        ``mcp_servers.json``, the server's ``status`` field, or
+        ``last_refreshed_at``. It is used exclusively by the orchestrator's
+        per-request health check to determine server reachability and obtain
+        a fresh tool list for the current request only.
+
+        Args:
+            server: The server record to query. The record's ``base_url``
+                and optional ``api_key`` are used for the connection.
+
+        Returns:
+            List of ``MCPTool`` instances returned by the live server.
+
+        Raises:
+            Any exception raised by the underlying ``MCPJsonRpcClient`` when
+            the server is unreachable, the session cannot be initialised, or
+            the ``tools/list`` RPC call fails. The caller (orchestrator) is
+            responsible for catching and handling these exceptions.
+        """
+        return await self._jsonrpc.fetch_tools(server)
+
     async def refresh_server(self, server_id: str) -> MCPServerRecord:
         """Refresh a server's tool list via JSON-RPC.
 
