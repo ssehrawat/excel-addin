@@ -51,6 +51,8 @@ export interface ChartInsert {
   destinationWorksheet?: string | null;
   name?: string | null;
   title?: string | null;
+  xAxisTitle?: string | null;
+  yAxisTitle?: string | null;
   topLeftCell?: string | null;
   bottomRightCell?: string | null;
   seriesBy?: ChartSeriesBy;

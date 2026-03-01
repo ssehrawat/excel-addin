@@ -761,6 +761,14 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
           chart.title.text = insert.title;
           chart.title.visible = true;
         }
+        if (insert.xAxisTitle) {
+          chart.axes.categoryAxis.title.text = insert.xAxisTitle;
+          chart.axes.categoryAxis.title.visible = true;
+        }
+        if (insert.yAxisTitle) {
+          chart.axes.valueAxis.title.text = insert.yAxisTitle;
+          chart.axes.valueAxis.title.visible = true;
+        }
         if (insert.topLeftCell) {
           const topLeft = destinationWorksheet.getRange(insert.topLeftCell);
           const bottomRight = insert.bottomRightCell

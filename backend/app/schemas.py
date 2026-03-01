@@ -79,6 +79,8 @@ class ChartInsert(BaseModel):
     )
     name: Optional[str] = None
     title: Optional[str] = None
+    x_axis_title: Optional[str] = Field(default=None, alias="xAxisTitle")
+    y_axis_title: Optional[str] = Field(default=None, alias="yAxisTitle")
     top_left_cell: Optional[str] = Field(default=None, alias="topLeftCell")
     bottom_right_cell: Optional[str] = Field(default=None, alias="bottomRightCell")
     series_by: ChartSeriesBy = Field(default=ChartSeriesBy.AUTO, alias="seriesBy")

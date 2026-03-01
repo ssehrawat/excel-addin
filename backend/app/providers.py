@@ -188,8 +188,20 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "does not derive from existing cell data.\n"
         "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
         "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
-        "Every chart insert MUST include `chartType` (Excel.ChartType) and `sourceAddress`. "
+        "Every chart insert MUST include `chartType` (Excel.ChartType), `sourceAddress`, "
+        "and a descriptive `title`, plus `xAxisTitle` and `yAxisTitle` for the axes. "
         "Use official identifiers like 'XYScatter', 'ColumnClustered', 'LineMarkers'.\n"
+        "MODIFYING EXISTING CHARTS: To change properties on an existing chart (title, "
+        "axis titles, legend, formatting), return a needs_data response using "
+        "execute_xl_office_js with Office.js code. Example for setting chart and axis "
+        "titles:\n"
+        '{"needs_data": true, "tool_call": {"tool": "execute_xl_office_js", "args": '
+        '{"code": "const chart = context.workbook.worksheets.getItem(\'Sheet1\')'
+        ".charts.getItem('Chart 1'); chart.title.text = 'My Title'; "
+        "chart.title.visible = true; chart.axes.categoryAxis.title.text = 'X Axis'; "
+        "chart.axes.categoryAxis.title.visible = true; chart.axes.valueAxis.title.text = 'Y Axis'; "
+        "chart.axes.valueAxis.title.visible = true; await context.sync();"
+        '"}}}\n'
         "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
     )
 
@@ -982,6 +994,8 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
         )
         name = candidate.get("name")
         title = candidate.get("title")
+        x_axis_title = candidate.get("x_axis_title") or candidate.get("xAxisTitle")
+        y_axis_title = candidate.get("y_axis_title") or candidate.get("yAxisTitle")
         series_by_raw = candidate.get("series_by") or candidate.get("seriesBy")
         series_by = ChartSeriesBy.AUTO
         if isinstance(series_by_raw, str):
@@ -999,6 +1013,8 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
                     bottom_right_cell=bottom_right_cell,
                     name=name,
                     title=title,
+                    x_axis_title=x_axis_title,
+                    y_axis_title=y_axis_title,
                     series_by=series_by,
                 )
             )
