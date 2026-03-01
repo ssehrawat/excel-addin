@@ -92,6 +92,9 @@ type MessageFn = (msg: ChatMessage) => void;
 type DeltaFn = (id: string, delta: string) => void;
 // eslint-disable-next-line no-unused-vars
 type StringFn = (text: string) => void;
+/** Thinking step progress event from the backend. */
+// eslint-disable-next-line no-unused-vars
+type StepFn = (step: { id: string; text: string; status: "active" | "done" }) => void;
 
 /** Result of a single streaming round with the backend. */
 interface StreamRoundResult {
@@ -115,8 +118,9 @@ export function App() {
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
-  const [statusText, setStatusText] = useState<string | null>(null);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+  const [thinkingSteps, setThinkingSteps] = useState<
+    { id: string; text: string; status: "active" | "done" }[]
+  >([]);
 
   const messagesRef = useRef(messages);
   useEffect(() => {
@@ -299,7 +303,7 @@ export function App() {
     onAppendDelta: DeltaFn,
     onFinalizeMessage: MessageFn,
     onStatus: StringFn,
-    onSuggestion: StringFn
+    onStep: StepFn
   ): Promise<StreamRoundResult> => {
     const result: StreamRoundResult = {
       cellUpdates: [],
@@ -331,6 +335,7 @@ export function App() {
       const handleEvent = (event: ChatStreamEvent) => {
         switch (event.type) {
           case "message_start":
+            setThinkingSteps([]);
             onAppendMessage(event.payload);
             break;
           case "message_delta":
@@ -366,8 +371,8 @@ export function App() {
           case "status":
             onStatus(event.payload);
             break;
-          case "suggestion":
-            onSuggestion(event.payload);
+          case "step":
+            onStep(event.payload);
             break;
           case "error":
             throw new Error(event.payload?.message ?? "Streaming error");
@@ -451,8 +456,7 @@ export function App() {
       return next;
     });
     setIsBusy(true);
-    setSuggestion(null);
-    setStatusText(null);
+    setThinkingSteps([]);
 
     const appendMessage = (message: ChatMessage) => {
       // Only add visible message kinds to state
@@ -498,8 +502,19 @@ export function App() {
       });
     };
 
-    const onStatus = (text: string) => setStatusText(text);
-    const onSuggestion = (text: string) => setSuggestion(text);
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    const onStatus: StringFn = () => {};
+    const onStep = (step: { id: string; text: string; status: "active" | "done" }) => {
+      setThinkingSteps((prev) => {
+        const idx = prev.findIndex((s) => s.id === step.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = step;
+          return next;
+        }
+        return [...prev, step];
+      });
+    };
 
     try {
       if (typeof Office === "undefined") {
@@ -546,7 +561,7 @@ export function App() {
           appendMessageDelta,
           finalizeMessage,
           onStatus,
-          onSuggestion
+          onStep
         );
 
         allCellUpdates = allCellUpdates.concat(roundResult.cellUpdates);
@@ -562,11 +577,9 @@ export function App() {
         }
 
         // Execute the requested Excel tools and re-POST
-        setStatusText("Reading workbook data…");
         const toolResults: WorkbookToolResult[] = await Promise.all(
           roundResult.toolCallRequired.map((call) => executeWorkbookTool(call))
         );
-        setStatusText(null);
 
         payload = {
           ...payload,
@@ -607,7 +620,7 @@ export function App() {
       });
     } finally {
       setIsBusy(false);
-      setStatusText(null);
+      setThinkingSteps([]);
     }
   };
 
@@ -616,8 +629,7 @@ export function App() {
       <ChatPanel
         messages={messages}
         isBusy={isBusy}
-        statusText={statusText}
-        suggestion={suggestion}
+        thinkingSteps={thinkingSteps}
         onSend={handleSend}
         onOpenSettings={handleOpenSettings}
       />

@@ -184,6 +184,6 @@ export type ChatStreamEvent =
   | { type: "telemetry"; payload: Telemetry | null }
   | { type: "tool_call_required"; payload: WorkbookToolCall[] }
   | { type: "status"; payload: string }
-  | { type: "suggestion"; payload: string }
+  | { type: "step"; payload: { id: string; text: string; status: "active" | "done" } }
   | { type: "done"; payload?: null }
   | { type: "error"; payload: { message: string } };

@@ -137,6 +137,15 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         parts.append("\n".join(mcp_lines) + "\n\n")
 
     parts.append(
+        "CLARIFICATION:\n"
+        "- If the user's query is ambiguous, too vague, or missing critical details "
+        "(e.g. which sheet, which range, what calculation), ask a clarifying question "
+        "instead of guessing. Return a direct answer with your question in the "
+        "\"answer\" field. Do NOT use needs_data for clarification — just ask in "
+        "natural language.\n\n"
+    )
+
+    parts.append(
         "DECISION RULES:\n"
         "- If the question can be answered from provided context → answer directly\n"
         "- If you need more data → return a needs_data response "
@@ -163,7 +172,7 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
     parts.append(
         "RESPONSE FORMAT — Option A (direct answer):\n"
         "{\"answer\": \"...\", \"cell_updates\": [...], \"format_updates\": [...], "
-        "\"chart_inserts\": [...], \"suggestion\": \"...\"}\n\n"
+        "\"chart_inserts\": [...]}\n\n"
         f"RESPONSE FORMAT — Option B (needs more data):\n{option_b}\n\n"
     )
 
@@ -172,12 +181,15 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "Every cell update MUST include: `address` (A1 notation, include worksheet like "
         "'Sheet1!E7:E9' when known), `mode` ('replace' or 'append'), and `values` "
         "(two-dimensional array; wrap single rows like [[\"Header\"], [123]]).\n"
+        "FORMULA RULE: When writing calculation results to cells, ALWAYS use Excel "
+        "formulas (e.g. =SUM(A1:A10), =AVERAGE(B2:B50), =VLOOKUP(...)) instead of "
+        "static computed values. Formulas keep the workbook dynamic and update when "
+        "source data changes. Only use static values for text labels or data that "
+        "does not derive from existing cell data.\n"
         "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
         "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
         "Every chart insert MUST include `chartType` (Excel.ChartType) and `sourceAddress`. "
         "Use official identifiers like 'XYScatter', 'ColumnClustered', 'LineMarkers'.\n"
-        "SUGGESTION FIELD: ONE optional follow-up action, phrased as a question. "
-        "It will NOT execute automatically.\n"
         "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
     )
 
@@ -256,7 +268,6 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
     """Stream a ProviderResult as NDJSON events.
 
     Only FINAL and MESSAGE kind messages are streamed as visible bubbles.
-    SUGGESTION messages are emitted as a separate ``suggestion`` event.
     THOUGHT/STEP/CONTEXT messages are silently dropped (they stay internal).
     tool_call_required causes a ``tool_call_required`` event and early return.
     """
@@ -268,15 +279,11 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
         }
         return
 
-    suggestion: Optional[str] = None
     visible_messages = [
         m
         for m in result.messages
         if m.kind in (MessageKind.FINAL, MessageKind.MESSAGE)
     ]
-    for m in result.messages:
-        if m.kind == MessageKind.SUGGESTION and m.content.strip():
-            suggestion = m.content.strip()
 
     for index, message in enumerate(visible_messages):
         if index > 0:
@@ -318,9 +325,6 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
                 item.model_dump(by_alias=True) for item in result.chart_inserts
             ],
         }
-    if suggestion:
-        yield {"type": "suggestion", "payload": suggestion}
-
     if result.telemetry:
         await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
         yield {
@@ -383,16 +387,6 @@ class MockProvider:
                 created_at=_timestamp(),
             )
         )
-        messages.append(
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.SUGGESTION,
-                content="Would you like me to summarize a table, build a formula, or draft insights?",
-                created_at=_timestamp(),
-            )
-        )
-
         cell_updates: List[CellUpdate] = []
         format_updates: List[FormatUpdate] = []
         if request.selection:
@@ -454,7 +448,7 @@ class MockProvider:
 
         Yields:
             ProviderStreamEvent dicts (message_start, message_delta,
-            message_done, suggestion, cell_updates, format_updates,
+            message_done, cell_updates, format_updates,
             chart_inserts, telemetry).
         """
         async for event in _stream_result(result):
@@ -574,7 +568,7 @@ class OpenAIProvider:
 
         Yields:
             ProviderStreamEvent dicts (message_start, message_delta,
-            message_done, suggestion, cell_updates, format_updates,
+            message_done, cell_updates, format_updates,
             chart_inserts, telemetry).
         """
         async for event in _stream_result(result):
@@ -696,7 +690,7 @@ class AnthropicProvider:
 
         Yields:
             ProviderStreamEvent dicts (message_start, message_delta,
-            message_done, suggestion, cell_updates, format_updates,
+            message_done, cell_updates, format_updates,
             chart_inserts, telemetry).
         """
         async for event in _stream_result(result):
@@ -812,7 +806,6 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
             logger.warning("LLM returned non-JSON output: %s", content)
     return {
         "answer": content if isinstance(content, str) else "No answer produced.",
-        "suggestion": "",
         "cell_updates": [],
         "format_updates": [],
         "chart_inserts": [],
@@ -857,19 +850,6 @@ def assemble_messages_from_payload(
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
                 content=f"Here is my best effort answer to: {prompt}",
-                created_at=_timestamp(),
-            )
-        )
-
-    # Add suggestion at the end if present
-    suggestion = payload.get("suggestion")
-    if suggestion and str(suggestion).strip():
-        messages.append(
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.SUGGESTION,
-                content=str(suggestion).strip(),
                 created_at=_timestamp(),
             )
         )

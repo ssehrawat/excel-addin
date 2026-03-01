@@ -5,7 +5,7 @@ import {
   makeStyles,
   shorthands
 } from "@fluentui/react-components";
-import { ArrowRight16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
+import { CheckmarkCircle16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../types";
 
@@ -64,27 +64,19 @@ const useStyles = makeStyles({
     border: "1px solid #e5e7eb",
     borderRadius: "14px 14px 14px 4px"
   },
-  statusRow: {
+  thinkingStep: {
     display: "flex",
     alignItems: "center",
     gap: "8px",
-    padding: "6px 0",
-    color: "#6b7280",
+    padding: "4px 0",
     fontSize: "13px",
     alignSelf: "flex-start"
   },
-  suggestionChip: {
-    alignSelf: "flex-start",
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    ...shorthands.padding("6px", "12px"),
-    borderRadius: "20px",
-    border: "1px solid #d1d5db",
-    backgroundColor: "#f9fafb",
-    color: "#374151",
-    fontSize: "13px",
-    cursor: "pointer"
+  thinkingStepDone: {
+    color: "#10b981"
+  },
+  thinkingStepActive: {
+    color: "#6b7280"
   },
   composer: {
     borderTop: "1px solid #e4e4e4",
@@ -115,8 +107,7 @@ const useStyles = makeStyles({
 interface ChatPanelProps {
   messages: ChatMessage[];
   isBusy: boolean;
-  statusText?: string | null;
-  suggestion?: string | null;
+  thinkingSteps: { id: string; text: string; status: "active" | "done" }[];
   // eslint-disable-next-line no-unused-vars
   onSend: (text: string) => Promise<void>;
   onOpenSettings: () => void;
@@ -125,8 +116,7 @@ interface ChatPanelProps {
 export function ChatPanel({
   messages,
   isBusy,
-  statusText,
-  suggestion,
+  thinkingSteps,
   onSend,
   onOpenSettings
 }: ChatPanelProps) {
@@ -138,7 +128,7 @@ export function ChatPanel({
   // Auto-scroll to bottom whenever messages or status change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, statusText, suggestion]);
+  }, [messages, thinkingSteps]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -162,11 +152,6 @@ export function ChatPanel({
       event.preventDefault();
       void handleSubmit(event as unknown as FormEvent);
     }
-  };
-
-  const handleSuggestionClick = async () => {
-    if (!suggestion || isBusy) return;
-    await onSend(suggestion);
   };
 
   // Only render user messages and final/message assistant answers
@@ -204,25 +189,26 @@ export function ChatPanel({
           </div>
         ))}
 
-        {/* Ephemeral status indicator — shown while busy */}
-        {isBusy && (
-          <div className={styles.statusRow}>
-            <Spinner size="extra-tiny" />
-            <span>{statusText || "Thinking…"}</span>
-          </div>
-        )}
-
-        {/* Suggestion chip — shown after last assistant message */}
-        {!isBusy && suggestion && (
-          <button
-            className={styles.suggestionChip}
-            onClick={handleSuggestionClick}
-            type="button"
-          >
-            <ArrowRight16Filled />
-            {suggestion}
-          </button>
-        )}
+        {/* Stacking thinking steps — shown while busy */}
+        {thinkingSteps.length > 0 &&
+          thinkingSteps.map((step) => (
+            <div key={step.id} className={styles.thinkingStep}>
+              {step.status === "done" ? (
+                <CheckmarkCircle16Filled className={styles.thinkingStepDone} />
+              ) : (
+                <Spinner size="extra-tiny" />
+              )}
+              <span
+                className={
+                  step.status === "done"
+                    ? styles.thinkingStepDone
+                    : styles.thinkingStepActive
+                }
+              >
+                {step.text}
+              </span>
+            </div>
+          ))}
 
         <div ref={messagesEndRef} />
       </div>

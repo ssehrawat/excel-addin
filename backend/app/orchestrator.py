@@ -158,12 +158,12 @@ class LangGraphOrchestrator:
            as CONTEXT, re-run the health check, and continue the loop.
 
         The stream emits the following event types (in order of appearance):
-        - ``status``: ephemeral progress text (health check, tool invocation)
+        - ``step``: progress step with ``{id, text, status}`` where status is
+          ``"active"`` or ``"done"`` (replaces the old ``status`` event type)
         - ``tool_call_required``: emitted instead of an answer when an Excel
           tool must run in the browser; always followed by ``done``
         - ``message_start`` / ``message_delta`` / ``message_done``: streamed
           final answer text
-        - ``suggestion``: optional follow-up chip text
         - ``cell_updates`` / ``format_updates`` / ``chart_inserts``: Excel
           mutations to apply after the stream completes
         - ``telemetry``: performance metadata (hidden from UI)
@@ -183,11 +183,36 @@ class LangGraphOrchestrator:
         telemetry_payload: Dict[str, Any] = {}
         mcp_telemetry: Dict[str, Any] = {}
         context_messages: List[ChatMessage] = []
+        step_counter = 0
+        current_step_text = ""
+
+        def _next_step_id() -> str:
+            nonlocal step_counter
+            step_counter += 1
+            return f"step-{step_counter}"
+
+        def _emit_step(step_id: str, text: str, status: str) -> Dict[str, Any]:
+            nonlocal current_step_text
+            current_step_text = text
+            return {
+                "type": "step",
+                "payload": {"id": step_id, "text": text, "status": status},
+            }
+
+        # Emit initial thinking step
+        current_step_id = _next_step_id()
+        yield _emit_step(current_step_id, "Thinking\u2026", "active")
 
         # --- Determine context and MCP tools ---
         if request.tool_results:
             # Re-POST: frontend returned Excel tool results
             context_messages = self._build_tool_result_context(request)
+
+            # Mark thinking done, emit reading step
+            yield _emit_step(current_step_id, current_step_text, "done")
+            current_step_id = _next_step_id()
+            yield _emit_step(current_step_id, "Reading your Excel data\u2026", "active")
+
             _, mcp_tools = await self._get_live_mcp_tools()
         else:
             # Fresh request: health-check MCP servers before building system prompt
@@ -197,7 +222,9 @@ class LangGraphOrchestrator:
                 else 0
             )
             if enabled_count > 0:
-                yield {"type": "status", "payload": "Checking available tools\u2026"}
+                yield _emit_step(current_step_id, current_step_text, "done")
+                current_step_id = _next_step_id()
+                yield _emit_step(current_step_id, "Checking available tools\u2026", "active")
             _, mcp_tools = await self._get_live_mcp_tools()
 
         augmented = self._augment_request(request, context_messages)
@@ -211,6 +238,16 @@ class LangGraphOrchestrator:
 
         # --- ReAct loop ---
         for _iteration in range(MAX_REACT_ITERATIONS):
+            # Emit analyzing step before provider call
+            yield _emit_step(current_step_id, current_step_text, "done")
+            current_step_id = _next_step_id()
+            analyze_text = (
+                "Reading your Excel data\u2026"
+                if request.tool_results and _iteration == 0
+                else "Analyzing your data\u2026"
+            )
+            yield _emit_step(current_step_id, analyze_text, "active")
+
             try:
                 result = await provider.generate(augmented)
             except Exception as exc:
@@ -221,6 +258,8 @@ class LangGraphOrchestrator:
                 return
 
             if result.tool_call_required is None:
+                # Mark last step done before streaming answer
+                yield _emit_step(current_step_id, current_step_text, "done")
                 # LLM produced a final answer — stream it
                 try:
                     async for event in provider.stream_result(result):
@@ -269,7 +308,10 @@ class LangGraphOrchestrator:
                     augmented = self._augment_request(request, context_messages)
                     continue
 
-                yield {"type": "status", "payload": f"Calling {tool_name}\u2026"}
+                # Emit MCP tool call step
+                yield _emit_step(current_step_id, current_step_text, "done")
+                current_step_id = _next_step_id()
+                yield _emit_step(current_step_id, f"Calling {tool_name}\u2026", "active")
                 try:
                     invocation = await self._mcp_service.invoke_tool(
                         server_id, tool_name, {"arguments": tc.args}
