@@ -632,6 +632,10 @@ export function App() {
         thinkingSteps={thinkingSteps}
         onSend={handleSend}
         onOpenSettings={handleOpenSettings}
+        onNewChat={() => {
+          setMessages(INITIAL_MESSAGES);
+          setThinkingSteps([]);
+        }}
       />
       <SettingsDialog
         open={settingsOpen}

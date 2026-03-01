@@ -5,7 +5,7 @@ import {
   makeStyles,
   shorthands
 } from "@fluentui/react-components";
-import { CheckmarkCircle16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
+import { Add24Regular, CheckmarkCircle16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../types";
 
@@ -111,6 +111,7 @@ interface ChatPanelProps {
   // eslint-disable-next-line no-unused-vars
   onSend: (text: string) => Promise<void>;
   onOpenSettings: () => void;
+  onNewChat: () => void;
 }
 
 export function ChatPanel({
@@ -118,7 +119,8 @@ export function ChatPanel({
   isBusy,
   thinkingSteps,
   onSend,
-  onOpenSettings
+  onOpenSettings,
+  onNewChat
 }: ChatPanelProps) {
   const styles = useStyles();
   const [input, setInput] = useState("");
@@ -166,6 +168,14 @@ export function ChatPanel({
           <div className={styles.headerTitle}>Workbook Copilot</div>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <Tooltip content="New chat" relationship="label">
+            <Button
+              icon={<Add24Regular />}
+              appearance="subtle"
+              onClick={onNewChat}
+              disabled={isBusy}
+            />
+          </Tooltip>
           <Tooltip content="Settings" relationship="label">
             <Button
               icon={<Settings24Regular />}
