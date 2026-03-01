@@ -241,11 +241,7 @@ class LangGraphOrchestrator:
             # Emit analyzing step before provider call
             yield _emit_step(current_step_id, current_step_text, "done")
             current_step_id = _next_step_id()
-            analyze_text = (
-                "Reading your Excel data\u2026"
-                if request.tool_results and _iteration == 0
-                else "Analyzing your data\u2026"
-            )
+            analyze_text = "Analyzing your data\u2026"
             yield _emit_step(current_step_id, analyze_text, "active")
 
             try:
