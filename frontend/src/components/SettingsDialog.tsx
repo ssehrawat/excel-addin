@@ -64,7 +64,7 @@ export function SettingsDialog({
     <Dialog open={open} onOpenChange={(_, data) => !data.open && onClose()}>
       <DialogSurface>
         <DialogBody>
-          <DialogTitle>MyExcelCompanion Settings</DialogTitle>
+          <DialogTitle>Workbook Copilot Settings</DialogTitle>
           <DialogContent>
             <TabList
               selectedValue={activeTab}

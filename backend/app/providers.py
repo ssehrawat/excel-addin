@@ -33,6 +33,7 @@ from .schemas import (
     MessageKind,
     MessageRole,
     Telemetry,
+    WorkbookToolCall,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,151 @@ CHART_TYPE_ALIASES: Dict[str, str] = {
     "column": "ColumnClustered",
     "bar": "BarClustered",
 }
+
+
+@dataclass
+class MCPToolEntry:
+    """A live MCP tool available for the current request.
+
+    Instances are created by the orchestrator's per-request health check and
+    injected into the system prompt so the LLM can select and call them.
+
+    Attributes:
+        namespaced_name: Unique tool identifier used in LLM tool_call responses.
+            Format: ``mcp__{server_id}__{tool_name}``.
+        server_id: ID of the owning MCPServerRecord.
+        server_name: Human-readable server name shown in status events.
+        description: Tool description injected verbatim into the system prompt.
+        input_schema: JSON Schema dict describing the tool's accepted arguments.
+    """
+
+    namespaced_name: str
+    server_id: str
+    server_name: str
+    description: str
+    input_schema: Dict[str, Any]
+
+
+def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
+    """Build the LLM system prompt, dynamically including live MCP tools.
+
+    Generates a complete system prompt that lists all available tools
+    (always Excel tools, plus any live MCP tools for this request). The
+    DECISION RULES section explicitly instructs the LLM to use tools only
+    when they directly help answer the query.
+
+    Args:
+        mcp_tools: Live MCP tools from the orchestrator's health check.
+            When empty, the ``EXTERNAL MCP TOOLS`` section is omitted
+            entirely so the LLM does not attempt MCP calls.
+
+    Returns:
+        Complete system prompt string ready to send as the ``system``
+        role message to the LLM.
+    """
+    parts: List[str] = [
+        "You are Workbook Copilot, an AI assistant for Microsoft Excel.\n\n"
+        "You receive structured context:\n"
+        "- workbook_metadata: Filename, all sheets with row/column dimensions\n"
+        "- user_context: Active sheet name, currently selected range address\n"
+        "- active_sheet_preview: First rows of active sheet as CSV (may be truncated)\n"
+        "- selection: Values of cells the user has explicitly selected\n\n",
+        "EXCEL TOOLS (request when you need more data):\n"
+        "- get_xl_cell_ranges: Read specific ranges with formulas and formatting. "
+        "Args: {ranges: [\"A1:C10\"], sheetName: \"Sheet1\"}\n"
+        "- get_xl_range_as_csv: Read large data ranges as CSV. "
+        "Args: {sheetName: \"Sheet1\", range: \"A1:D200\", maxRows: 200, offset: 0}\n"
+        "- xl_search_data: Find values across sheets. "
+        "Args: {query: \"...\", sheetName?: \"Sheet1\", caseSensitive?: false, "
+        "regex?: false, matchEntireCell?: false}\n"
+        "- get_all_xl_objects: List charts/tables/pivot tables. "
+        "Args: {sheetName?: \"Sheet1\", objectType?: \"chart\"|\"table\"|\"pivot\"}\n"
+        "- execute_xl_office_js: Run Office.js code snippet for specialized reads. "
+        "Args: {code: \"...\"}\n\n",
+    ]
+
+    if mcp_tools:
+        mcp_lines = [
+            "EXTERNAL MCP TOOLS (call when they provide relevant external data):\n"
+        ]
+        for tool in mcp_tools:
+            schema_str = json.dumps(tool.input_schema)
+            mcp_lines.append(
+                f"- {tool.namespaced_name}: [{tool.server_name}] {tool.description}\n"
+                f"  Args schema: {schema_str}"
+            )
+        parts.append("\n".join(mcp_lines) + "\n\n")
+
+    parts.append(
+        "CLARIFICATION:\n"
+        "- If the user's query is ambiguous, too vague, or missing critical details "
+        "(e.g. which sheet, which range, what calculation), ask a clarifying question "
+        "instead of guessing. Return a direct answer with your question in the "
+        "\"answer\" field. Do NOT use needs_data for clarification — just ask in "
+        "natural language.\n\n"
+    )
+
+    parts.append(
+        "DECISION RULES:\n"
+        "- If the question can be answered from provided context → answer directly\n"
+        "- If you need more data → return a needs_data response "
+        "(one tool call per response, max 3 rounds total)\n"
+        "- Prefer get_xl_range_as_csv for data analysis; "
+        "get_xl_cell_ranges for formula/format inspection\n"
+        "- For large sheets (> 200 rows), use offset pagination or xl_search_data first\n"
+        "- Use MCP tools only when they provide relevant external data for the query. "
+        "Do NOT use tools unless they directly help answer the user's question.\n\n"
+    )
+
+    option_b = (
+        "{\"needs_data\": true, \"tool_call\": "
+        "{\"tool\": \"get_xl_range_as_csv\", \"args\": {\"sheetName\": \"Sheet1\", "
+        "\"range\": \"A1:D200\", \"maxRows\": 200}}}"
+    )
+    if mcp_tools:
+        option_b += (
+            "\n  — or MCP tool:\n"
+            "{\"needs_data\": true, \"tool_call\": "
+            "{\"tool\": \"mcp__<server_id>__<tool_name>\", \"args\": {...}}}"
+        )
+
+    parts.append(
+        "RESPONSE FORMAT — Option A (direct answer):\n"
+        "{\"answer\": \"...\", \"cell_updates\": [...], \"format_updates\": [...], "
+        "\"chart_inserts\": [...]}\n\n"
+        f"RESPONSE FORMAT — Option B (needs more data):\n{option_b}\n\n"
+    )
+
+    parts.append(
+        "RULES FOR CELL UPDATES:\n"
+        "Every cell update MUST include: `address` (A1 notation, include worksheet like "
+        "'Sheet1!E7:E9' when known), `mode` ('replace' or 'append'), and `values` "
+        "(two-dimensional array; wrap single rows like [[\"Header\"], [123]]).\n"
+        "FORMULA RULE: When writing calculation results to cells, ALWAYS use Excel "
+        "formulas (e.g. =SUM(A1:A10), =AVERAGE(B2:B50), =VLOOKUP(...)) instead of "
+        "static computed values. Formulas keep the workbook dynamic and update when "
+        "source data changes. Only use static values for text labels or data that "
+        "does not derive from existing cell data.\n"
+        "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
+        "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
+        "Every chart insert MUST include `chartType` (Excel.ChartType), `sourceAddress`, "
+        "and a descriptive `title`, plus `xAxisTitle` and `yAxisTitle` for the axes. "
+        "Use official identifiers like 'XYScatter', 'ColumnClustered', 'LineMarkers'.\n"
+        "MODIFYING EXISTING CHARTS: To change properties on an existing chart (title, "
+        "axis titles, legend, formatting), return a needs_data response using "
+        "execute_xl_office_js with Office.js code. Example for setting chart and axis "
+        "titles:\n"
+        '{"needs_data": true, "tool_call": {"tool": "execute_xl_office_js", "args": '
+        '{"code": "const chart = context.workbook.worksheets.getItem(\'Sheet1\')'
+        ".charts.getItem('Chart 1'); chart.title.text = 'My Title'; "
+        "chart.title.visible = true; chart.axes.categoryAxis.title.text = 'X Axis'; "
+        "chart.axes.categoryAxis.title.visible = true; chart.axes.valueAxis.title.text = 'Y Axis'; "
+        "chart.axes.valueAxis.title.visible = true; await context.sync();"
+        '"}}}\n'
+        "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
+    )
+
+    return "".join(parts)
 
 
 def _timestamp() -> str:
@@ -90,13 +236,26 @@ def _is_response_format_error(error: Exception) -> bool:
 
 @dataclass
 class ProviderResult:
+    """Result returned by a provider's generate() call.
+
+    Attributes:
+        messages: Chat messages to include in the response.
+        cell_updates: Excel cell writes.
+        format_updates: Excel formatting changes.
+        chart_inserts: Excel chart creations.
+        telemetry: Performance data.
+        tool_call_required: Set when the LLM needs more Excel data before answering.
+    """
+
     messages: List[ChatMessage]
     cell_updates: List[CellUpdate] = field(default_factory=list)
     format_updates: List[FormatUpdate] = field(default_factory=list)
     chart_inserts: List[ChartInsert] = field(default_factory=list)
     telemetry: Optional[Telemetry] = None
+    tool_call_required: Optional[WorkbookToolCall] = None
 
     def to_response(self) -> ChatResponse:
+        """Convert to a ChatResponse for the non-streaming path."""
         return ChatResponse(
             messages=self.messages,
             cell_updates=self.cell_updates,
@@ -118,7 +277,27 @@ def _chunk_text(text: str, size: int = STREAM_MESSAGE_CHUNK_SIZE) -> Iterable[st
 
 
 async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStreamEvent]:
-    for index, message in enumerate(result.messages):
+    """Stream a ProviderResult as NDJSON events.
+
+    Only FINAL and MESSAGE kind messages are streamed as visible bubbles.
+    THOUGHT/STEP/CONTEXT messages are silently dropped (they stay internal).
+    tool_call_required causes a ``tool_call_required`` event and early return.
+    """
+    if result.tool_call_required:
+        call = result.tool_call_required
+        yield {
+            "type": "tool_call_required",
+            "payload": [call.model_dump()],
+        }
+        return
+
+    visible_messages = [
+        m
+        for m in result.messages
+        if m.kind in (MessageKind.FINAL, MessageKind.MESSAGE)
+    ]
+
+    for index, message in enumerate(visible_messages):
         if index > 0:
             await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
 
@@ -178,6 +357,10 @@ class LLMProvider(Protocol):
         self, request: ChatRequest
     ) -> AsyncIterator[ProviderStreamEvent]: ...
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]: ...
+
 
 class MockProvider:
     id = "mock"
@@ -191,22 +374,7 @@ class MockProvider:
         selection_preview = [
             f"{sel.address} = {sel.values}" for sel in request.selection[:3]
         ]
-        messages = [
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.THOUGHT,
-                content="Reviewing your prompt and any selected cells.",
-                created_at=_timestamp(),
-            ),
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.STEP,
-                content="Using built-in logic to craft a helpful answer.",
-                created_at=_timestamp(),
-            ),
-        ]
+        messages = []
 
         if selection_preview:
             messages.append(
@@ -225,22 +393,12 @@ class MockProvider:
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
                 content=(
-                    f"(mock) Answer to '{request.prompt}'. "
-                    "Replace me by configuring a real provider in the backend environment."
+                    f"(mock) Answer to: '{request.prompt}'. "
+                    "Configure a real provider in the backend environment to get real answers."
                 ),
                 created_at=_timestamp(),
             )
         )
-        messages.append(
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.SUGGESTION,
-                content="Would you like me to summarize a table, build a formula, or draft insights?",
-                created_at=_timestamp(),
-            )
-        )
-
         cell_updates: List[CellUpdate] = []
         format_updates: List[FormatUpdate] = []
         if request.selection:
@@ -274,11 +432,7 @@ class MockProvider:
                 )
             )
 
-        telemetry = Telemetry(
-            provider=self.id,
-            model="mock-local",
-            latency_ms=5,
-        )
+        telemetry = Telemetry(provider=self.id, model="mock-local", latency_ms=5)
 
         return ProviderResult(
             messages=messages,
@@ -293,6 +447,25 @@ class MockProvider:
         async for event in _stream_result(result):
             yield event
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
+        async for event in _stream_result(result):
+            yield event
+
 
 class OpenAIProvider:
     id = "openai"
@@ -300,7 +473,7 @@ class OpenAIProvider:
     description = "Leverage OpenAI models such as GPT-4o."
     requires_key = True
 
-    def __init__(self) -> None:
+    def __init__(self, mcp_tools: Optional[List[MCPToolEntry]] = None) -> None:
         settings = get_settings()
         self.api_key = settings.openai_api_key
         self.model = settings.openai_model
@@ -319,6 +492,7 @@ class OpenAIProvider:
             ) from exc
 
         self._settings = settings
+        self._system_prompt = build_system_prompt(mcp_tools or [])
         self._json_mode_enabled = True
         self._client = self._instantiate_openai_client(json_mode=True)
 
@@ -339,42 +513,9 @@ class OpenAIProvider:
         return client
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
-        system_prompt = (
-            "You are MyExcelCompanion, an Excel-focused assistant. "
-            "Respond with JSON containing exact keys: "
-            "`thoughts` (array of strings), `steps` (array of strings), `answer` (string), "
-            "`suggestion` (single string - ONE best optional follow-up action), `cell_updates` (array of objects), "
-            "`format_updates` (array of objects for formatting changes), and "
-            "`chart_inserts` (array of objects describing charts to create). "
-            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
-            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
-            "use ONLY cell_updates to provide the data. Then suggest a chart or formatting in the suggestion field. "
-            "Every cell update object MUST include: "
-            "`address` (A1 notation, include worksheet like 'Sheet1!E7:E9' when known), "
-            "`mode` ('replace' or 'append'), and `values` (a two-dimensional array of rows; "
-            "wrap single rows like [['Header'], [123]]). "
-            "Only use modes 'replace' or 'append'. Provide cell updates whenever data in Excel should change. "
-            "Every format update MUST include `address`, optional `worksheet`, and formatting fields such as "
-            "`fill_color`, `font_color`, `bold`, `italic`. Only include format_updates if explicitly requested. "
-            "Every chart insert MUST include `chartType` (matching Excel.ChartType), `sourceAddress` "
-            "(data range, include worksheet when known). Optional fields: `sourceWorksheet`, `destinationWorksheet`, "
-            "`name`, `title`, `topLeftCell`, `bottomRightCell`, `seriesBy` ('auto' | 'rows' | 'columns'). "
-            "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
-            "do not return aliases like 'xlXYScatter' or 'Scatter'. "
-            "The suggestion field should contain ONLY ONE suggestion - the most relevant and useful next action "
-            "the user might want to take. Use this for charts/formatting when not explicitly requested. "
-            "Phrase it as an optional action that will NOT be executed automatically. "
-            "Examples: 'Would you like me to create a line chart from this data?', 'I could also format these cells "
-            "with conditional formatting if needed.' Do NOT act on suggestions automatically. "
-            "Return strictly valid JSON with fully expanded arrays—never include formulas, code, or list comprehensions."
-        )
-
         messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": build_prompt_payload(request),
-            },
+            {"role": "system", "content": self._system_prompt},
+            {"role": "user", "content": build_prompt_payload(request)},
         ]
 
         try:
@@ -391,16 +532,27 @@ class OpenAIProvider:
                 raise
 
         parsed = parse_structured_response(result.content)
-        provider_messages = assemble_messages_from_payload(parsed, request.prompt)
-        cell_updates = build_cell_updates(parsed.get("cell_updates", []))
-        format_updates = build_format_updates(parsed.get("format_updates", []))
-        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         telemetry = Telemetry(
             provider=self.id,
             model=self.model,
             raw={"openai_response": getattr(result, "response_metadata", {})},
         )
+
+        # Handle needs_data response (LLM requests more data via tool call)
+        if parsed.get("needs_data") and parsed.get("tool_call"):
+            tool_call = _build_tool_call(parsed["tool_call"])
+            if tool_call:
+                return ProviderResult(
+                    messages=[],
+                    tool_call_required=tool_call,
+                    telemetry=telemetry,
+                )
+
+        provider_messages = assemble_messages_from_payload(parsed, request.prompt)
+        cell_updates = build_cell_updates(parsed.get("cell_updates", []))
+        format_updates = build_format_updates(parsed.get("format_updates", []))
+        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         return ProviderResult(
             messages=provider_messages,
@@ -415,6 +567,25 @@ class OpenAIProvider:
         async for event in _stream_result(result):
             yield event
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
+        async for event in _stream_result(result):
+            yield event
+
 
 class AnthropicProvider:
     id = "anthropic"
@@ -422,7 +593,7 @@ class AnthropicProvider:
     description = "Access Claude models via Anthropic API."
     requires_key = True
 
-    def __init__(self) -> None:
+    def __init__(self, mcp_tools: Optional[List[MCPToolEntry]] = None) -> None:
         settings = get_settings()
         self.api_key = settings.anthropic_api_key
         self.model = settings.anthropic_model
@@ -441,6 +612,7 @@ class AnthropicProvider:
             ) from exc
 
         self._settings = settings
+        self._system_prompt = build_system_prompt(mcp_tools or [])
         self._json_mode_enabled = True
         self._client = self._instantiate_anthropic_client(json_mode=True)
 
@@ -463,38 +635,9 @@ class AnthropicProvider:
         return client
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
-        system_prompt = (
-            "You are MyExcelCompanion, an Excel-focused assistant. "
-            "Respond with JSON containing keys thoughts, steps, answer, suggestion, cell_updates, format_updates. "
-            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
-            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
-            "use ONLY cell_updates to provide the data. Then suggest a chart or formatting in the suggestion field. "
-            "Every cell update object MUST include: "
-            "`address` (A1 notation, include worksheet such as 'Sheet1!E7:E9'), "
-            "`mode` ('replace' or 'append'), and `values` (two-dimensional array; wrap rows like "
-            "[['Header'], [123]]). "
-            "Only use modes 'replace' or 'append'. Provide cell updates whenever the workbook should change. "
-            "Every format update MUST include `address`, optional `worksheet`, and formatting fields "
-            "like `fill_color`, `font_color`, `bold`, `italic`. Only include format_updates if explicitly requested. "
-            "Include `chart_inserts` as an array ONLY when the user explicitly requests a chart. Each chart insert object must include "
-            "`chartType` (Excel.ChartType string) and `sourceAddress` (include worksheet when known). "
-            "Optional fields: `sourceWorksheet`, `destinationWorksheet`, `name`, `title`, `topLeftCell`, `bottomRightCell`, "
-            "`seriesBy` ('auto' | 'rows' | 'columns'). "
-            "Use official Excel.ChartType identifiers such as 'XYScatter', 'ColumnClustered', 'LineMarkers'; "
-            "avoid aliases like 'xlXYScatter' or 'Scatter'. "
-            "The suggestion field should contain ONLY ONE suggestion - the most relevant and useful next action "
-            "the user might want to take. Use this for charts/formatting when not explicitly requested. "
-            "Phrase it as an optional action that will NOT be executed automatically. "
-            "Examples: 'Would you like me to create a line chart from this data?', 'I could also format these cells "
-            "with conditional formatting if needed.' Do NOT act on suggestions automatically. "
-            "Return strictly valid JSON with fully enumerated arrays—no formulas, code, or list comprehensions."
-        )
         messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": build_prompt_payload(request),
-            },
+            {"role": "system", "content": self._system_prompt},
+            {"role": "user", "content": build_prompt_payload(request)},
         ]
 
         try:
@@ -511,16 +654,27 @@ class AnthropicProvider:
                 raise
 
         parsed = parse_structured_response(result.content)
-        provider_messages = assemble_messages_from_payload(parsed, request.prompt)
-        cell_updates = build_cell_updates(parsed.get("cell_updates", []))
-        format_updates = build_format_updates(parsed.get("format_updates", []))
-        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         telemetry = Telemetry(
             provider=self.id,
             model=self.model,
             raw={"anthropic_response": getattr(result, "response_metadata", {})},
         )
+
+        # Handle needs_data response (LLM requests more data via tool call)
+        if parsed.get("needs_data") and parsed.get("tool_call"):
+            tool_call = _build_tool_call(parsed["tool_call"])
+            if tool_call:
+                return ProviderResult(
+                    messages=[],
+                    tool_call_required=tool_call,
+                    telemetry=telemetry,
+                )
+
+        provider_messages = assemble_messages_from_payload(parsed, request.prompt)
+        cell_updates = build_cell_updates(parsed.get("cell_updates", []))
+        format_updates = build_format_updates(parsed.get("format_updates", []))
+        chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
 
         return ProviderResult(
             messages=provider_messages,
@@ -535,8 +689,38 @@ class AnthropicProvider:
         async for event in _stream_result(result):
             yield event
 
+    async def stream_result(
+        self, result: ProviderResult
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a completed ProviderResult as NDJSON events.
+
+        Called by the orchestrator's ReAct loop after ``generate()`` returns
+        a final answer (i.e. ``result.tool_call_required is None``).
+
+        Args:
+            result: A completed ProviderResult with no pending tool call.
+
+        Yields:
+            ProviderStreamEvent dicts (message_start, message_delta,
+            message_done, cell_updates, format_updates,
+            chart_inserts, telemetry).
+        """
+        async for event in _stream_result(result):
+            yield event
+
 
 def build_prompt_payload(request: ChatRequest) -> str:
+    """Build the user-turn JSON payload sent to the LLM.
+
+    Includes workbook metadata, user context, active sheet preview, selection
+    data, and conversation history.
+
+    Args:
+        request: The incoming ChatRequest.
+
+    Returns:
+        JSON string to use as the user message content.
+    """
     selection_text = "\n".join(
         f"{sel.address}: {sel.values}" for sel in request.selection
     )
@@ -557,28 +741,48 @@ def build_prompt_payload(request: ChatRequest) -> str:
         history = context_block
     else:
         history = trimmed_history
-    payload = {
+
+    payload: Dict[str, Any] = {
         "conversation_history": history,
         "user_prompt": request.prompt,
         "selection": selection_text,
-        "instructions": (
-            "Provide JSON with keys: thoughts (array), steps (array), answer (string), "
-            "suggestion (single string - ONE best optional follow-up action), cell_updates (array of {address, mode, values}), "
-            "format_updates (array of {address, worksheet, fillColor, fontColor, bold, italic}), "
-            "chart_inserts (array of {chartType, sourceAddress, sourceWorksheet?, "
-            "destinationWorksheet?, name?, title?, topLeftCell?, bottomRightCell?, seriesBy?}). "
-            "CRITICAL: Only include chart_inserts or format_updates when the user EXPLICITLY requests them. "
-            "If the user asks to get/fetch/show/retrieve data WITHOUT explicitly asking for charts or formatting, "
-            "provide ONLY cell_updates with the data, then suggest creating a chart in the suggestion field. "
-            "Conversation history often contains context messages generated from MCP tools (e.g., MongoDB query results). "
-            "Treat those context messages as authoritative data retrieved on your behalf and use them to build the answer "
-            "and populate cell_updates. Do not claim you lack database access when such context is present. "
-            "The suggestion should be the most relevant next action (e.g., creating a chart from the data), phrased as an optional request. "
-            "It will NOT be executed automatically - the user must explicitly request it. "
-            "Use concise actionable language."
-        ),
     }
+
+    # Include workbook context when available
+    if request.workbook_metadata:
+        payload["workbook_metadata"] = request.workbook_metadata.model_dump(
+            by_alias=True
+        )
+    if request.user_context:
+        payload["user_context"] = request.user_context.model_dump(by_alias=True)
+    if request.active_sheet_preview:
+        payload["active_sheet_preview"] = request.active_sheet_preview
+
     return json.dumps(payload)
+
+
+def _build_tool_call(raw: Any) -> Optional[WorkbookToolCall]:
+    """Build a WorkbookToolCall from the LLM's needs_data tool_call dict.
+
+    The ``tool`` field may contain an MCP-namespaced tool name in the format
+    ``mcp__<server_id>__<tool_name>``. The orchestrator routes based on this
+    prefix — no additional schema fields are needed.
+
+    Args:
+        raw: The raw ``tool_call`` value from the LLM response.
+
+    Returns:
+        A WorkbookToolCall, or None if the data is invalid.
+    """
+    if not isinstance(raw, dict):
+        return None
+    tool_name = raw.get("tool")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        return None
+    args = raw.get("args") or {}
+    if not isinstance(args, dict):
+        args = {}
+    return WorkbookToolCall(id=_message_id(), tool=tool_name.strip(), args=args)
 
 
 def _normalize_identifier(value: str) -> str:
@@ -597,6 +801,14 @@ def _normalize_chart_type(value: Any) -> Optional[str]:
 
 
 def parse_structured_response(content: Any) -> Dict[str, Any]:
+    """Parse a potentially-JSON LLM response into a dict.
+
+    Args:
+        content: Raw LLM output (string or dict).
+
+    Returns:
+        Parsed dict.  Falls back to a minimal default structure on failure.
+    """
     if isinstance(content, dict):
         return content
     if isinstance(content, str):
@@ -605,10 +817,7 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
         except json.JSONDecodeError:
             logger.warning("LLM returned non-JSON output: %s", content)
     return {
-        "thoughts": ["Unable to parse model response."],
-        "steps": [],
         "answer": content if isinstance(content, str) else "No answer produced.",
-        "suggestion": "",
         "cell_updates": [],
         "format_updates": [],
         "chart_inserts": [],
@@ -618,28 +827,34 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
 def assemble_messages_from_payload(
     payload: Dict[str, Any], prompt: str
 ) -> List[ChatMessage]:
+    """Build ChatMessage objects from a parsed LLM response dict.
+
+    Only the ``answer`` field produces visible (FINAL) messages.
+    Thoughts and steps are intentionally omitted from the message list.
+
+    Args:
+        payload: Parsed LLM response dict.
+        prompt: Original user prompt (used for fallback answer).
+
+    Returns:
+        List of ChatMessage instances.
+    """
     messages: List[ChatMessage] = []
 
-    # Process thoughts, steps, and answer first
-    for key, kind in [
-        ("thoughts", MessageKind.THOUGHT),
-        ("steps", MessageKind.STEP),
-        ("answer", MessageKind.FINAL),
-    ]:
-        for item in _ensure_iterable(payload.get(key)):
-            if not item:
-                continue
-            messages.append(
-                ChatMessage(
-                    id=_message_id(),
-                    role=MessageRole.ASSISTANT,
-                    kind=kind,
-                    content=str(item),
-                    created_at=_timestamp(),
-                )
+    # Only create a FINAL message for the answer
+    answer = payload.get("answer")
+    if answer and str(answer).strip():
+        messages.append(
+            ChatMessage(
+                id=_message_id(),
+                role=MessageRole.ASSISTANT,
+                kind=MessageKind.FINAL,
+                content=str(answer).strip(),
+                created_at=_timestamp(),
             )
+        )
 
-    # Ensure we have a final answer
+    # Ensure we always have a final answer
     if not any(msg.kind == MessageKind.FINAL for msg in messages):
         messages.append(
             ChatMessage(
@@ -651,23 +866,18 @@ def assemble_messages_from_payload(
             )
         )
 
-    # Add single suggestion at the end if present
-    suggestion = payload.get("suggestion")
-    if suggestion and str(suggestion).strip():
-        messages.append(
-            ChatMessage(
-                id=_message_id(),
-                role=MessageRole.ASSISTANT,
-                kind=MessageKind.SUGGESTION,
-                content=str(suggestion),
-                created_at=_timestamp(),
-            )
-        )
-
     return messages
 
 
 def build_cell_updates(raw_updates: Any) -> List[CellUpdate]:
+    """Parse raw LLM cell_updates into CellUpdate models.
+
+    Args:
+        raw_updates: Raw value from the LLM response (should be a list of dicts).
+
+    Returns:
+        List of valid CellUpdate instances.
+    """
     updates: List[CellUpdate] = []
     for candidate in _ensure_iterable(raw_updates):
         if not isinstance(candidate, dict):
@@ -707,6 +917,14 @@ def build_cell_updates(raw_updates: Any) -> List[CellUpdate]:
 
 
 def build_format_updates(raw_updates: Any) -> List[FormatUpdate]:
+    """Parse raw LLM format_updates into FormatUpdate models.
+
+    Args:
+        raw_updates: Raw value from the LLM response.
+
+    Returns:
+        List of valid FormatUpdate instances.
+    """
     updates: List[FormatUpdate] = []
     for candidate in _ensure_iterable(raw_updates):
         if not isinstance(candidate, dict):
@@ -740,6 +958,14 @@ def build_format_updates(raw_updates: Any) -> List[FormatUpdate]:
 
 
 def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
+    """Parse raw LLM chart_inserts into ChartInsert models.
+
+    Args:
+        raw_inserts: Raw value from the LLM response.
+
+    Returns:
+        List of valid ChartInsert instances.
+    """
     inserts: List[ChartInsert] = []
     for candidate in _ensure_iterable(raw_inserts):
         if not isinstance(candidate, dict):
@@ -768,6 +994,8 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
         )
         name = candidate.get("name")
         title = candidate.get("title")
+        x_axis_title = candidate.get("x_axis_title") or candidate.get("xAxisTitle")
+        y_axis_title = candidate.get("y_axis_title") or candidate.get("yAxisTitle")
         series_by_raw = candidate.get("series_by") or candidate.get("seriesBy")
         series_by = ChartSeriesBy.AUTO
         if isinstance(series_by_raw, str):
@@ -785,6 +1013,8 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
                     bottom_right_cell=bottom_right_cell,
                     name=name,
                     title=title,
+                    x_axis_title=x_axis_title,
+                    y_axis_title=y_axis_title,
                     series_by=series_by,
                 )
             )
@@ -798,6 +1028,11 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
 
 
 def available_providers() -> List[Dict[str, Any]]:
+    """Return the list of available providers based on current settings.
+
+    Returns:
+        List of provider info dicts for the /providers endpoint.
+    """
     settings = get_settings()
     providers: List[Dict[str, Any]] = []
     if settings.mock_provider_enabled:
@@ -828,7 +1063,24 @@ def available_providers() -> List[Dict[str, Any]]:
     return providers
 
 
-def create_provider(provider_id: str) -> LLMProvider:
+def create_provider(
+    provider_id: str,
+    mcp_tools: Optional[List[MCPToolEntry]] = None,
+) -> LLMProvider:
+    """Instantiate an LLM provider by ID, injecting live MCP tools.
+
+    Args:
+        provider_id: Provider identifier string (e.g. ``"openai"``).
+        mcp_tools: Live MCP tools from the orchestrator's health check.
+            Passed to the provider constructor to build the dynamic system
+            prompt. Defaults to ``None`` (treated as empty list).
+
+    Returns:
+        An ``LLMProvider`` instance configured with the given tools.
+
+    Raises:
+        HTTPException: 400 if the provider ID is unknown or disabled.
+    """
     provider_id = provider_id.lower()
     if provider_id == MockProvider.id:
         if not get_settings().mock_provider_enabled:
@@ -837,7 +1089,7 @@ def create_provider(provider_id: str) -> LLMProvider:
             )
         return MockProvider()
     if provider_id == OpenAIProvider.id:
-        return OpenAIProvider()
+        return OpenAIProvider(mcp_tools=mcp_tools)
     if provider_id == AnthropicProvider.id:
-        return AnthropicProvider()
+        return AnthropicProvider(mcp_tools=mcp_tools)
     raise HTTPException(status_code=400, detail=f"Unknown provider '{provider_id}'.")

@@ -79,6 +79,8 @@ class ChartInsert(BaseModel):
     )
     name: Optional[str] = None
     title: Optional[str] = None
+    x_axis_title: Optional[str] = Field(default=None, alias="xAxisTitle")
+    y_axis_title: Optional[str] = Field(default=None, alias="yAxisTitle")
     top_left_cell: Optional[str] = Field(default=None, alias="topLeftCell")
     bottom_right_cell: Optional[str] = Field(default=None, alias="bottomRightCell")
     series_by: ChartSeriesBy = Field(default=ChartSeriesBy.AUTO, alias="seriesBy")
@@ -87,12 +89,88 @@ class ChartInsert(BaseModel):
         populate_by_name = True
 
 
+# ---------------------------------------------------------------------------
+# Workbook context models (new for refactor)
+# ---------------------------------------------------------------------------
+
+class SheetMetadata(BaseModel):
+    """Metadata for a single worksheet."""
+
+    id: str
+    name: str
+    index: int = 0
+    max_rows: int = Field(default=0, alias="maxRows")
+    max_columns: int = Field(default=0, alias="maxColumns")
+
+    class Config:
+        populate_by_name = True
+
+
+class WorkbookMetadata(BaseModel):
+    """Workbook-level metadata collected at add-in init."""
+
+    success: bool = True
+    file_name: str = Field(default="", alias="fileName")
+    sheets_metadata: List[SheetMetadata] = Field(
+        default_factory=list, alias="sheetsMetadata"
+    )
+    total_sheets: int = Field(default=0, alias="totalSheets")
+
+    class Config:
+        populate_by_name = True
+
+
+class UserContext(BaseModel):
+    """Per-request context: active sheet and current selection."""
+
+    current_active_sheet_name: str = Field(default="", alias="currentActiveSheetName")
+    selected_ranges: str = Field(default="", alias="selectedRanges")
+
+    class Config:
+        populate_by_name = True
+
+
+class WorkbookToolCall(BaseModel):
+    """An Excel read tool call requested by the LLM."""
+
+    id: str
+    tool: str  # e.g. "get_xl_range_as_csv"
+    args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkbookToolResult(BaseModel):
+    """Result of an Excel read tool executed by the frontend."""
+
+    id: str
+    tool: str
+    result: Any = None
+    error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Chat request / response
+# ---------------------------------------------------------------------------
+
 class ChatRequest(BaseModel):
     prompt: str
     provider: str
     messages: List[ChatMessage]
     selection: List[CellSelection] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Workbook context (new)
+    workbook_metadata: Optional[WorkbookMetadata] = Field(
+        default=None, alias="workbookMetadata"
+    )
+    user_context: Optional[UserContext] = Field(default=None, alias="userContext")
+    tool_results: List[WorkbookToolResult] = Field(
+        default_factory=list, alias="toolResults"
+    )
+    active_sheet_preview: Optional[str] = Field(
+        default=None, alias="activeSheetPreview"
+    )
+
+    class Config:
+        populate_by_name = True
 
 
 class Telemetry(BaseModel):
@@ -184,4 +262,3 @@ class ProvidersResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
-

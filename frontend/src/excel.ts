@@ -4,7 +4,12 @@ import {
   CellSelection,
   CellUpdate,
   ChartInsert,
-  FormatUpdate
+  FormatUpdate,
+  SheetMetadata,
+  UserContext,
+  WorkbookMetadata,
+  WorkbookToolCall,
+  WorkbookToolResult
 } from "./types";
 
 type RangeReference = {
@@ -97,6 +102,470 @@ const resolveChartType = (rawType: string): Excel.ChartType | null => {
   }
   return null;
 };
+
+// ---------------------------------------------------------------------------
+// Workbook metadata & context (new)
+// ---------------------------------------------------------------------------
+
+/**
+ * Collect workbook-level metadata: filename and all sheet names/dimensions.
+ * Called once on add-in init; result is stored in React state and re-used
+ * on every subsequent message send.
+ *
+ * @returns WorkbookMetadata or a failure object if Office is unavailable.
+ */
+export async function getWorkbookMetadata(): Promise<WorkbookMetadata> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return {
+      success: false,
+      fileName: "",
+      sheetsMetadata: [],
+      totalSheets: 0
+    };
+  }
+
+  try {
+    return await Excel.run(async (context) => {
+      const workbook = context.workbook;
+      workbook.load("name");
+      const sheets = workbook.worksheets;
+      sheets.load("items");
+      await context.sync();
+
+      // Load per-sheet properties and used-range counts
+      const sheetItems = sheets.items;
+      const usedRanges = sheetItems.map((ws) => {
+        ws.load(["id", "name", "position"]);
+        return ws.getUsedRangeOrNullObject();
+      });
+      usedRanges.forEach((ur) => ur.load(["isNullObject", "rowCount", "columnCount"]));
+      await context.sync();
+
+      const sheetsMetadata: SheetMetadata[] = sheetItems.map((ws, i) => ({
+        id: ws.id,
+        name: ws.name,
+        index: ws.position,
+        maxRows: !usedRanges[i].isNullObject ? usedRanges[i].rowCount : 0,
+        maxColumns: !usedRanges[i].isNullObject ? usedRanges[i].columnCount : 0
+      }));
+
+      return {
+        success: true,
+        fileName: workbook.name || "Workbook",
+        sheetsMetadata,
+        totalSheets: sheetItems.length
+      };
+    });
+  } catch (error) {
+    console.error("getWorkbookMetadata failed", error);
+    return { success: false, fileName: "", sheetsMetadata: [], totalSheets: 0 };
+  }
+}
+
+/**
+ * Collect fresh per-request context: the active sheet name and the current
+ * selection address string.
+ *
+ * @returns UserContext with active sheet name and selected range address.
+ */
+export async function getUserContext(): Promise<UserContext> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return { currentActiveSheetName: "", selectedRanges: "" };
+  }
+  try {
+    return await Excel.run(async (context) => {
+      const activeSheet = context.workbook.worksheets.getActiveWorksheet();
+      activeSheet.load("name");
+      const selection = context.workbook.getSelectedRange();
+      selection.load("address");
+      await context.sync();
+      return {
+        currentActiveSheetName: activeSheet.name,
+        selectedRanges: selection.address
+      };
+    });
+  } catch (error) {
+    console.error("getUserContext failed", error);
+    return { currentActiveSheetName: "", selectedRanges: "" };
+  }
+}
+
+/**
+ * Read the first {@link maxRows} rows of the active sheet as a CSV string.
+ * Used as a lightweight "sheet preview" attached to every chat request so the
+ * LLM has structural awareness without a full tool call.
+ *
+ * @param maxRows - Maximum number of rows to read (default 50).
+ * @returns CSV string, or null when the sheet is empty or on error.
+ */
+export async function getLightweightSheetPreview(
+  maxRows = 50
+): Promise<string | null> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return null;
+  }
+  try {
+    return await Excel.run(async (context) => {
+      const sheet = context.workbook.worksheets.getActiveWorksheet();
+      const usedRange = sheet.getUsedRangeOrNullObject();
+      usedRange.load(["isNullObject", "rowCount", "columnCount", "values"]);
+      await context.sync();
+
+      if (usedRange.isNullObject || usedRange.rowCount === 0) {
+        return null;
+      }
+
+      const allValues = usedRange.values as (string | number | boolean | null)[][];
+      const rows = allValues.slice(0, maxRows);
+      const csv = rows
+        .map((row) =>
+          row
+            .map((cell) => {
+              const s = cell == null ? "" : String(cell);
+              // Quote cells that contain commas or newlines
+              return s.includes(",") || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+            })
+            .join(",")
+        )
+        .join("\n");
+      return csv;
+    });
+  } catch (error) {
+    console.error("getLightweightSheetPreview failed", error);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Excel read tools (called on-demand via tool_call_required)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read one or more ranges with values, formulas, and basic formatting.
+ *
+ * @param ranges - Array of range addresses (e.g. ["A1:C10"]).
+ * @param sheetName - Worksheet name; defaults to active sheet if omitted.
+ * @returns Array of range detail objects.
+ */
+export async function getXlCellRanges(
+  ranges: string[],
+  sheetName?: string
+): Promise<unknown> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return [];
+  }
+  return Excel.run(async (context) => {
+    const ws =
+      sheetName
+        ? context.workbook.worksheets.getItem(sheetName)
+        : context.workbook.worksheets.getActiveWorksheet();
+
+    const results: unknown[] = [];
+    for (const addr of ranges) {
+      const range = ws.getRange(addr);
+      range.load(["address", "values", "formulas", "numberFormat"]);
+      range.format.fill.load("color");
+      range.format.font.load(["color", "bold", "italic"]);
+      await context.sync();
+
+      results.push({
+        address: range.address,
+        values: range.values,
+        formulas: range.formulas,
+        numberFormat: range.numberFormat,
+        fillColor: range.format.fill.color,
+        fontColor: range.format.font.color,
+        bold: range.format.font.bold,
+        italic: range.format.font.italic
+      });
+    }
+    return results;
+  });
+}
+
+/**
+ * Read a range from a sheet and return its data as a CSV string.
+ * Supports row-offset pagination for large sheets.
+ *
+ * @param sheetName - Worksheet name.
+ * @param range - Range address (e.g. "A1:D200").
+ * @param maxRows - Maximum rows to return.
+ * @param offset - Number of rows to skip from the top of the range.
+ * @returns CSV string.
+ */
+export async function getXlRangeAsCsv(
+  sheetName: string,
+  range: string,
+  maxRows?: number,
+  offset?: number
+): Promise<string> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return "";
+  }
+  return Excel.run(async (context) => {
+    const ws = context.workbook.worksheets.getItem(sheetName);
+    let r = ws.getRange(range);
+    r.load(["values", "rowCount"]);
+    await context.sync();
+
+    let allValues = r.values as (string | number | boolean | null)[][];
+
+    const startRow = offset ?? 0;
+    const endRow = maxRows != null ? startRow + maxRows : allValues.length;
+    const rows = allValues.slice(startRow, endRow);
+
+    return rows
+      .map((row) =>
+        row
+          .map((cell) => {
+            const s = cell == null ? "" : String(cell);
+            return s.includes(",") || s.includes("\n")
+              ? `"${s.replace(/"/g, '""')}"`
+              : s;
+          })
+          .join(",")
+      )
+      .join("\n");
+  });
+}
+
+/**
+ * Search for text or values across one or all sheets.
+ *
+ * @param query - The value to search for.
+ * @param options - Optional search configuration.
+ * @returns Array of matches with address, sheet name, and cell value.
+ */
+export async function xlSearchData(
+  query: string,
+  options: {
+    sheetName?: string;
+    caseSensitive?: boolean;
+    matchEntireCell?: boolean;
+  } = {}
+): Promise<unknown> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return [];
+  }
+  return Excel.run(async (context) => {
+    const matches: unknown[] = [];
+    const searchOptions: Excel.SearchCriteria = {
+      completeMatch: options.matchEntireCell ?? false,
+      matchCase: options.caseSensitive ?? false
+    };
+
+    const sheetsToSearch: Excel.Worksheet[] = [];
+    if (options.sheetName) {
+      sheetsToSearch.push(context.workbook.worksheets.getItem(options.sheetName));
+    } else {
+      const allSheets = context.workbook.worksheets;
+      allSheets.load("items");
+      await context.sync();
+      sheetsToSearch.push(...allSheets.items);
+    }
+
+    for (const ws of sheetsToSearch) {
+      ws.load("name");
+      try {
+        const foundRanges = ws.findAllOrNullObject(query, searchOptions);
+        foundRanges.load(["isNullObject", "areas"]);
+        await context.sync();
+        if (!foundRanges.isNullObject) {
+          foundRanges.areas.load("items");
+          await context.sync();
+          for (const area of foundRanges.areas.items) {
+            area.load(["address", "values"]);
+          }
+          await context.sync();
+          for (const area of foundRanges.areas.items) {
+            matches.push({
+              address: area.address,
+              worksheet: ws.name,
+              values: area.values
+            });
+          }
+        }
+      } catch {
+        // Sheet may not support search — skip silently
+      }
+    }
+    return matches;
+  });
+}
+
+/**
+ * Discover charts, tables, and pivot tables in the workbook.
+ *
+ * @param sheetName - Limit results to this sheet (optional).
+ * @param objectType - Filter by "chart", "table", or "pivot" (optional).
+ * @returns Object inventory structured by type.
+ */
+export async function getAllXlObjects(
+  sheetName?: string,
+  objectType?: "chart" | "table" | "pivot"
+): Promise<unknown> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return { charts: [], tables: [], pivotTables: [] };
+  }
+  return Excel.run(async (context) => {
+    const sheetsToScan: Excel.Worksheet[] = [];
+    if (sheetName) {
+      sheetsToScan.push(context.workbook.worksheets.getItem(sheetName));
+    } else {
+      const allSheets = context.workbook.worksheets;
+      allSheets.load("items");
+      await context.sync();
+      sheetsToScan.push(...allSheets.items);
+    }
+
+    const charts: unknown[] = [];
+    const tables: unknown[] = [];
+    const pivotTables: unknown[] = [];
+
+    for (const ws of sheetsToScan) {
+      ws.load("name");
+
+      if (!objectType || objectType === "chart") {
+        const wsCharts = ws.charts;
+        wsCharts.load("items");
+        await context.sync();
+        wsCharts.items.forEach((c) => {
+          c.load(["name", "chartType"]);
+        });
+        await context.sync();
+        wsCharts.items.forEach((c) => {
+          charts.push({ name: c.name, type: c.chartType, sheet: ws.name });
+        });
+      }
+
+      if (!objectType || objectType === "table") {
+        const wsTables = ws.tables;
+        wsTables.load("items");
+        await context.sync();
+        wsTables.items.forEach((t) => {
+          t.load(["name", "showTotals"]);
+        });
+        await context.sync();
+        wsTables.items.forEach((t) => {
+          tables.push({ name: t.name, sheet: ws.name });
+        });
+      }
+
+      if (!objectType || objectType === "pivot") {
+        const pivots = ws.pivotTables;
+        pivots.load("items");
+        await context.sync();
+        pivots.items.forEach((p) => {
+          p.load("name");
+        });
+        await context.sync();
+        pivots.items.forEach((p) => {
+          pivotTables.push({ name: p.name, sheet: ws.name });
+        });
+      }
+    }
+
+    return { charts, tables, pivotTables };
+  });
+}
+
+/**
+ * Execute an Office.js code snippet inside an Excel.run context.
+ * The snippet receives ``context`` (Excel.RequestContext) and ``Excel``
+ * as parameters and should return a JSON-serializable value.
+ *
+ * CAUTION: Only use this for read operations from trusted LLM responses.
+ *
+ * @param code - JavaScript code string that returns a value.
+ * @returns The value returned by the snippet, or an error string.
+ */
+export async function executeXlOfficeJs(code: string): Promise<unknown> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return { error: "Office not available" };
+  }
+  return Excel.run(async (context) => {
+    try {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function(
+        "context",
+        "Excel",
+        `return (async () => { ${code} })()`
+      );
+      const result = await fn(context, Excel);
+      await context.sync();
+      return result;
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+}
+
+/**
+ * Dispatch a WorkbookToolCall to the appropriate Office.js function.
+ * Wraps execution in try/catch and populates the ``error`` field on failure.
+ *
+ * @param call - The tool call emitted by the server.
+ * @returns A WorkbookToolResult with the execution outcome.
+ */
+export async function executeWorkbookTool(
+  call: WorkbookToolCall
+): Promise<WorkbookToolResult> {
+  try {
+    let result: unknown;
+    const a = call.args;
+    switch (call.tool) {
+      case "get_xl_cell_ranges":
+        result = await getXlCellRanges(
+          (a.ranges as string[]) || [],
+          (a.sheetName as string) || undefined
+        );
+        break;
+      case "get_xl_range_as_csv":
+        result = await getXlRangeAsCsv(
+          (a.sheetName as string) || "",
+          (a.range as string) || "A1",
+          a.maxRows != null ? Number(a.maxRows) : undefined,
+          a.offset != null ? Number(a.offset) : undefined
+        );
+        break;
+      case "xl_search_data":
+        result = await xlSearchData((a.query as string) || "", {
+          sheetName: (a.sheetName as string) || undefined,
+          caseSensitive: Boolean(a.caseSensitive),
+          matchEntireCell: Boolean(a.matchEntireCell)
+        });
+        break;
+      case "get_all_xl_objects":
+        result = await getAllXlObjects(
+          (a.sheetName as string) || undefined,
+          (a.objectType as "chart" | "table" | "pivot") || undefined
+        );
+        break;
+      case "execute_xl_office_js":
+        result = await executeXlOfficeJs((a.code as string) || "");
+        break;
+      default:
+        return {
+          id: call.id,
+          tool: call.tool,
+          result: null,
+          error: `Unknown tool: ${call.tool}`
+        };
+    }
+    return { id: call.id, tool: call.tool, result };
+  } catch (err) {
+    return {
+      id: call.id,
+      tool: call.tool,
+      result: null,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Existing read / write helpers (unchanged)
+// ---------------------------------------------------------------------------
 
 export async function getCurrentSelection(): Promise<CellSelection[]> {
   if (!Office.context || Office.context.host !== Office.HostType.Excel) {
@@ -292,6 +761,14 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
           chart.title.text = insert.title;
           chart.title.visible = true;
         }
+        if (insert.xAxisTitle) {
+          chart.axes.categoryAxis.title.text = insert.xAxisTitle;
+          chart.axes.categoryAxis.title.visible = true;
+        }
+        if (insert.yAxisTitle) {
+          chart.axes.valueAxis.title.text = insert.yAxisTitle;
+          chart.axes.valueAxis.title.visible = true;
+        }
         if (insert.topLeftCell) {
           const topLeft = destinationWorksheet.getRange(insert.topLeftCell);
           const bottomRight = insert.bottomRightCell
@@ -404,4 +881,3 @@ export async function getSelectionsFromPrompt(
   }
   return getSelectionsFromReferences(references);
 }
-

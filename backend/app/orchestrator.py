@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, TypedDict
 from uuid import uuid4
@@ -13,9 +13,8 @@ from fastapi import HTTPException
 from langgraph.graph import END, StateGraph
 
 from .mcp import MCPServerRecord, MCPServerService, ToolInvocationResult
-from .tool_args import ToolArgumentBuilder, ToolArgumentError
-from .router import MCPRouter, RouterSelection
 from .providers import (
+    MCPToolEntry,
     ProviderResult,
     ProviderStreamEvent,
     available_providers,
@@ -29,46 +28,40 @@ from .schemas import (
     MessageKind,
     MessageRole,
     Telemetry,
+    WorkbookToolResult,
 )
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class PlannedToolCall:
-    server: MCPServerRecord
-    tool_name: str
-    rationale: str
-    tool: MCPTool
-
-
-@dataclass
-class PlanResult:
-    steps: List[str] = field(default_factory=list)
-    tool_calls: List[PlannedToolCall] = field(default_factory=list)
-    clarification: Optional[str] = None
+MAX_REACT_ITERATIONS = 8
 
 
 class OrchestratorState(TypedDict, total=False):
     request: ChatRequest
     provider_id: str
+    mcp_tools: List[MCPToolEntry]
     provider_result: ProviderResult
     response: ChatResponse
     metadata: Dict[str, Any]
 
 
 class LangGraphOrchestrator:
-    MAX_TOOL_CALLS = 3
+    """Central orchestrator that manages MCP tools and LLM calls via a ReAct loop.
 
-    def __init__(
-        self,
-        mcp_service: Optional[MCPServerService] = None,
-        router: Optional[MCPRouter] = None,
-        argument_builder: Optional[ToolArgumentBuilder] = None,
-    ) -> None:
+    The streaming path (``stream()``) is the primary execution path used by
+    the frontend and implements the full ReAct (Reason + Act) agent loop.
+    The LangGraph graph handles the non-streaming fallback (``run()``).
+    """
+
+    def __init__(self, mcp_service: Optional[MCPServerService] = None) -> None:
+        """Initialise the orchestrator.
+
+        Args:
+            mcp_service: Optional MCP server service for tool invocation and
+                health checking. When ``None``, all MCP tool functionality is
+                disabled and the ReAct loop operates with Excel tools only.
+        """
         self._mcp_service = mcp_service
-        self._router = router
-        self._argument_builder = argument_builder
         self.graph = self._build_graph()
         self._compiled = self.graph.compile()
 
@@ -88,7 +81,8 @@ class LangGraphOrchestrator:
 
         async def invoke_provider(state: OrchestratorState) -> OrchestratorState:
             provider_id = state["provider_id"]
-            provider = create_provider(provider_id)
+            mcp_tools = state.get("mcp_tools", [])
+            provider = create_provider(provider_id, mcp_tools=mcp_tools)
             result = await provider.generate(state["request"])
             metadata = state.get("metadata", {})
             metadata["provider_label"] = getattr(provider, "label", provider_id)
@@ -120,170 +114,249 @@ class LangGraphOrchestrator:
         return graph
 
     async def run(self, request: ChatRequest) -> ChatResponse:
-        plan = await self._build_plan(request)
-        pre_messages: List[ChatMessage] = []
-        context_messages: List[ChatMessage] = []
-        telemetry_updates: Dict[str, Any] = {}
+        """Non-streaming execution path.
 
-        if plan.clarification:
-            clarification_message = self._message(
-                MessageKind.MESSAGE,
-                plan.clarification,
-            )
-            pre_messages.append(clarification_message)
-            return ChatResponse(messages=pre_messages)
+        Performs a per-request MCP health check to inject live tool definitions
+        into the system prompt, then invokes the LLM once via the LangGraph graph.
 
-        if plan.steps:
-            pre_messages.append(
-                self._message(
-                    MessageKind.STEP,
-                    self._format_plan(plan.steps),
-                )
-            )
+        Args:
+            request: The chat request.
 
-        if plan.tool_calls:
-            (
-                context_messages,
-                user_messages,
-                telemetry_updates,
-            ) = await self._execute_tool_calls(plan.tool_calls, request)
-            pre_messages.extend(user_messages)
-            telemetry_updates.setdefault(
-                "mcpServersUsed",
-                sorted({call.server.id for call in plan.tool_calls}),
-            )
-
-        augmented_request = self._augment_request(request, context_messages)
-        result_state = await self._compiled.ainvoke({"request": augmented_request})
-        response = result_state["response"]
-
-        if pre_messages:
-            response.messages = pre_messages + response.messages
-
-        if telemetry_updates:
-            response.telemetry = self._merge_telemetry(
-                response.telemetry, telemetry_updates
-            )
-
-        return response
+        Returns:
+            A complete ChatResponse.
+        """
+        _, mcp_tools = await self._get_live_mcp_tools()
+        context_messages = (
+            self._build_tool_result_context(request) if request.tool_results else []
+        )
+        augmented = self._augment_request(request, context_messages)
+        result_state = await self._compiled.ainvoke(
+            {"request": augmented, "mcp_tools": mcp_tools}
+        )
+        return result_state["response"]
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ProviderStreamEvent]:
+        """Stream a ReAct agent response for the given chat request.
+
+        Implements the Reason + Act loop:
+
+        1. Health-check all enabled MCP servers in parallel to determine which
+           are reachable. Only live servers contribute tools to the system
+           prompt, so the LLM never attempts to call an offline server.
+        2. Inject MCP and Excel tool definitions into the system prompt via
+           ``build_system_prompt()``. The LLM decides which tools to call
+           based on the query — no heuristics or pre-selection.
+        3. Loop up to ``MAX_REACT_ITERATIONS`` times:
+           - If the LLM returns a direct answer, stream it and finish.
+           - If the LLM calls an MCP tool (``mcp__<id>__<name>`` prefix),
+             execute it server-side, inject the result as a CONTEXT message,
+             and continue the loop.
+           - If the LLM calls an Excel tool, emit ``tool_call_required`` so
+             the frontend can execute it via Office.js, then end the stream.
+             The frontend will re-POST with ``tool_results``.
+        4. On re-POST (``request.tool_results`` is non-empty): inject results
+           as CONTEXT, re-run the health check, and continue the loop.
+
+        The stream emits the following event types (in order of appearance):
+        - ``step``: progress step with ``{id, text, status}`` where status is
+          ``"active"`` or ``"done"`` (replaces the old ``status`` event type)
+        - ``tool_call_required``: emitted instead of an answer when an Excel
+          tool must run in the browser; always followed by ``done``
+        - ``message_start`` / ``message_delta`` / ``message_done``: streamed
+          final answer text
+        - ``cell_updates`` / ``format_updates`` / ``chart_inserts``: Excel
+          mutations to apply after the stream completes
+        - ``telemetry``: performance metadata (hidden from UI)
+        - ``done``: stream complete
+        - ``error``: unrecoverable error (provider failure, max iterations)
+
+        Args:
+            request: The incoming chat request including prompt, conversation
+                history, workbook context, and optional tool results.
+
+        Yields:
+            ProviderStreamEvent dicts compatible with the frontend NDJSON
+            streaming contract.
+        """
         provider_id = request.provider.lower()
         started_at = time.time()
         telemetry_payload: Dict[str, Any] = {}
-        plan = await self._build_plan(request)
-        context_messages: List[ChatMessage] = []
         mcp_telemetry: Dict[str, Any] = {}
+        context_messages: List[ChatMessage] = []
+        step_counter = 0
+        current_step_text = ""
 
-        placeholder = self._message(
-            MessageKind.THOUGHT,
-            "Analyzing your prompt…",
-        )
-        yield {"type": "message", "payload": placeholder.model_dump(by_alias=True)}
+        def _next_step_id() -> str:
+            nonlocal step_counter
+            step_counter += 1
+            return f"step-{step_counter}"
 
-        if plan.clarification:
-            clarification = self._message(
-                MessageKind.MESSAGE,
-                plan.clarification,
-            )
-            yield {
-                "type": "message",
-                "payload": clarification.model_dump(by_alias=True),
+        def _emit_step(step_id: str, text: str, status: str) -> Dict[str, Any]:
+            nonlocal current_step_text
+            current_step_text = text
+            return {
+                "type": "step",
+                "payload": {"id": step_id, "text": text, "status": status},
             }
-            yield {"type": "done"}
+
+        # Emit initial thinking step
+        current_step_id = _next_step_id()
+        yield _emit_step(current_step_id, "Thinking\u2026", "active")
+
+        # --- Determine context and MCP tools ---
+        if request.tool_results:
+            # Re-POST: frontend returned Excel tool results
+            context_messages = self._build_tool_result_context(request)
+
+            # Mark thinking done, emit reading step
+            yield _emit_step(current_step_id, current_step_text, "done")
+            current_step_id = _next_step_id()
+            yield _emit_step(current_step_id, "Reading your Excel data\u2026", "active")
+
+            _, mcp_tools = await self._get_live_mcp_tools()
+        else:
+            # Fresh request: health-check MCP servers before building system prompt
+            enabled_count = (
+                len(self._mcp_service.list_enabled_records())
+                if self._mcp_service
+                else 0
+            )
+            if enabled_count > 0:
+                yield _emit_step(current_step_id, current_step_text, "done")
+                current_step_id = _next_step_id()
+                yield _emit_step(current_step_id, "Checking available tools\u2026", "active")
+            _, mcp_tools = await self._get_live_mcp_tools()
+
+        augmented = self._augment_request(request, context_messages)
+
+        try:
+            provider = create_provider(provider_id, mcp_tools=mcp_tools)
+        except Exception as exc:
+            logger.exception("Failed to initialize provider '%s'", provider_id)
+            yield {"type": "error", "payload": {"message": str(exc)}}
             return
 
-        if plan.steps:
-            plan_message = self._message(
-                MessageKind.STEP, self._format_plan(plan.steps)
-            )
-            yield {"type": "message", "payload": plan_message.model_dump(by_alias=True)}
+        # --- ReAct loop ---
+        for _iteration in range(MAX_REACT_ITERATIONS):
+            # Emit analyzing step before provider call
+            yield _emit_step(current_step_id, current_step_text, "done")
+            current_step_id = _next_step_id()
+            analyze_text = "Analyzing your data\u2026"
+            yield _emit_step(current_step_id, analyze_text, "active")
 
-        if plan.tool_calls:
-            if self._mcp_service is None:
-                logger.warning("Plan requested MCP tools but no service is configured.")
-            else:
-                mcp_telemetry["mcpServersUsed"] = sorted(
-                    {call.server.id for call in plan.tool_calls}
+            try:
+                result = await provider.generate(augmented)
+            except Exception as exc:
+                logger.exception(
+                    "Error while calling provider '%s'", provider_id
                 )
-                for call in plan.tool_calls:
-                    start_msg = self._message(
-                        MessageKind.THOUGHT,
-                        (
-                            f"Calling MCP tool '{call.tool_name}' "
-                            f"via {call.server.name}: {call.rationale}"
-                        ),
+                yield {"type": "error", "payload": {"message": str(exc)}}
+                return
+
+            if result.tool_call_required is None:
+                # Mark last step done before streaming answer
+                yield _emit_step(current_step_id, current_step_text, "done")
+                # LLM produced a final answer — stream it
+                try:
+                    async for event in provider.stream_result(result):
+                        if event.get("type") == "telemetry":
+                            payload = event.get("payload") or {}
+                            if isinstance(payload, dict):
+                                telemetry_payload.update(payload)
+                            continue
+                        yield event
+                except Exception as exc:
+                    logger.exception(
+                        "Error while streaming result from provider '%s'", provider_id
                     )
-                    yield {
-                        "type": "message",
-                        "payload": start_msg.model_dump(by_alias=True),
-                    }
+                    yield {"type": "error", "payload": {"message": str(exc)}}
+                    return
+                break  # Final answer streamed — exit ReAct loop
 
-                    try:
-                        invocation = await self._invoke_tool(call, request)
-                    except HTTPException as exc:  # pragma: no cover - surface error
-                        error_msg = self._message(
-                            MessageKind.STEP,
-                            f"Failed to use {call.tool_name}: {exc.detail}",
-                        )
-                        yield {
-                            "type": "message",
-                            "payload": error_msg.model_dump(by_alias=True),
-                        }
-                        continue
+            tc = result.tool_call_required
 
-                    summary_text = self._summarize_tool_result(invocation)
-                    user_summary = self._message(MessageKind.CONTEXT, summary_text)
-                    yield {
-                        "type": "message",
-                        "payload": user_summary.model_dump(by_alias=True),
-                    }
+            if tc.tool.startswith("mcp__"):
+                # MCP tool — execute server-side and continue loop
+                if not self._mcp_service:
+                    failure_msg = (
+                        f"MCP tool '{tc.tool}' cannot be called: "
+                        "MCP service is not configured."
+                    )
+                    logger.warning(failure_msg)
                     context_messages.append(
                         self._message(
-                            MessageKind.CONTEXT,
-                            summary_text,
-                            role=MessageRole.SYSTEM,
+                            MessageKind.CONTEXT, failure_msg, role=MessageRole.SYSTEM
                         )
                     )
+                    augmented = self._augment_request(request, context_messages)
+                    continue
+
+                try:
+                    server_id, tool_name = self._parse_mcp_tool_name(tc.tool)
+                except ValueError as exc:
+                    failure_msg = f"Malformed MCP tool name '{tc.tool}': {exc}"
+                    logger.warning(failure_msg)
+                    context_messages.append(
+                        self._message(
+                            MessageKind.CONTEXT, failure_msg, role=MessageRole.SYSTEM
+                        )
+                    )
+                    augmented = self._augment_request(request, context_messages)
+                    continue
+
+                # Emit MCP tool call step
+                yield _emit_step(current_step_id, current_step_text, "done")
+                current_step_id = _next_step_id()
+                yield _emit_step(current_step_id, f"Calling {tool_name}\u2026", "active")
+                try:
+                    invocation = await self._mcp_service.invoke_tool(
+                        server_id, tool_name, {"arguments": tc.args}
+                    )
+                    summary = self._summarize_tool_result(invocation)
+                    # Track MCP usage for telemetry
+                    mcp_telemetry.setdefault("mcpServersUsed", [])
+                    if server_id not in mcp_telemetry["mcpServersUsed"]:
+                        mcp_telemetry["mcpServersUsed"].append(server_id)
                     mcp_telemetry.setdefault("mcpTools", []).append(
-                        {
-                            "server": call.server.name,
-                            "tool": call.tool_name,
-                        }
+                        {"server": server_id, "tool": tool_name}
+                    )
+                except HTTPException as exc:
+                    summary = (
+                        f"MCP tool '{tool_name}' failed: {exc.detail}"
+                    )
+                    logger.warning(
+                        "MCP tool '%s' on server '%s' failed: %s",
+                        tool_name,
+                        server_id,
+                        exc.detail,
                     )
 
-        augmented_request = self._augment_request(request, context_messages)
+                context_messages.append(
+                    self._message(
+                        MessageKind.CONTEXT, summary, role=MessageRole.SYSTEM
+                    )
+                )
+                augmented = self._augment_request(request, context_messages)
+                # Continue the ReAct loop with the tool result injected
 
-        try:
-            provider = create_provider(provider_id)
-        except Exception as exc:  # pragma: no cover
-            logger.exception("Failed to initialize provider '%s'", provider_id)
+            else:
+                # Excel tool — requires browser round-trip
+                yield {
+                    "type": "tool_call_required",
+                    "payload": [tc.model_dump()],
+                }
+                yield {"type": "done"}
+                return
+
+        else:
+            # Loop exhausted without a final answer
             yield {
                 "type": "error",
-                "payload": {"message": str(exc)},
+                "payload": {"message": "Max reasoning iterations reached."},
             }
             return
 
-        try:
-            async for event in provider.stream(augmented_request):
-                if event.get("type") == "telemetry":
-                    payload = event.get("payload") or {}
-                    if isinstance(payload, dict):
-                        telemetry_payload.update(payload)
-                    else:
-                        telemetry_payload.update(dict(payload))
-                    continue
-                yield event
-        except Exception as exc:  # pragma: no cover
-            logger.exception(
-                "Error while streaming response from provider '%s'", provider_id
-            )
-            yield {
-                "type": "error",
-                "payload": {"message": str(exc)},
-            }
-            return
-
+        # --- Emit merged telemetry and done ---
         latency_ms = (time.time() - started_at) * 1000
         telemetry = dict(telemetry_payload)
         telemetry.update(mcp_telemetry)
@@ -295,54 +368,130 @@ class LangGraphOrchestrator:
         yield {"type": "telemetry", "payload": telemetry}
         yield {"type": "done"}
 
-    async def _execute_tool_calls(
+    async def _get_live_mcp_tools(
         self,
-        tool_calls: Sequence[PlannedToolCall],
-        request: ChatRequest,
-    ) -> tuple[List[ChatMessage], List[ChatMessage], Dict[str, Any]]:
-        context_messages: List[ChatMessage] = []
-        user_messages: List[ChatMessage] = []
-        telemetry_updates: Dict[str, Any] = {}
+    ) -> tuple[List[MCPServerRecord], List[MCPToolEntry]]:
+        """Health-check all enabled MCP servers in parallel and return live tools.
+
+        Probes each enabled server by attempting a real ``fetch_tools`` RPC call.
+        Servers that fail (unreachable, timeout, auth error) are silently excluded
+        and logged at WARNING level. The result is ephemeral — it is NOT persisted
+        to ``mcp_servers.json`` and does NOT update the UI status badge. The badge
+        reflects only explicit user-triggered refreshes.
+
+        Returns:
+            Tuple of ``(live_servers, mcp_tool_entries)`` where:
+            - ``live_servers`` is the subset of enabled records that responded.
+            - ``mcp_tool_entries`` is the flattened list of ``MCPToolEntry``
+              objects ready for injection into ``build_system_prompt()``.
+            Both lists are empty when ``mcp_service`` is ``None`` or no servers
+            are enabled.
+        """
         if not self._mcp_service:
-            return context_messages, user_messages, telemetry_updates
+            return [], []
+        servers = self._mcp_service.list_enabled_records()
+        if not servers:
+            return [], []
 
-        telemetry_updates["mcpTools"] = []
-
-        for call in tool_calls[: self.MAX_TOOL_CALLS]:
-            start_msg = self._message(
-                MessageKind.THOUGHT,
-                (
-                    f"Calling MCP tool '{call.tool_name}' "
-                    f"via {call.server.name}: {call.rationale}"
-                ),
-            )
-            user_messages.append(start_msg)
-
+        async def _probe(
+            server: MCPServerRecord,
+        ) -> Optional[tuple[MCPServerRecord, List[MCPTool]]]:
             try:
-                invocation = await self._invoke_tool(call, request)
-            except HTTPException as exc:
-                failure = self._message(
-                    MessageKind.STEP,
-                    f"Failed to use {call.tool_name}: {exc.detail}",
+                tools = await self._mcp_service.fetch_tools_live(server)
+                return server, tools
+            except Exception as exc:
+                logger.warning(
+                    "MCP server '%s' is unreachable; excluding from this request: %s",
+                    server.name,
+                    exc,
                 )
-                user_messages.append(failure)
+                return None
+
+        results = await asyncio.gather(*(_probe(s) for s in servers))
+
+        live_servers: List[MCPServerRecord] = []
+        mcp_tool_entries: List[MCPToolEntry] = []
+        for result in results:
+            if result is None:
                 continue
-
-            summary = self._summarize_tool_result(invocation)
-            user_summary = self._message(MessageKind.CONTEXT, summary)
-            user_messages.append(user_summary)
-            context_messages.append(
-                self._message(
-                    MessageKind.CONTEXT,
-                    summary,
-                    role=MessageRole.SYSTEM,
+            server, tools = result
+            live_servers.append(server)
+            for tool in tools:
+                mcp_tool_entries.append(
+                    MCPToolEntry(
+                        namespaced_name=f"mcp__{server.id}__{tool.name}",
+                        server_id=server.id,
+                        server_name=server.name,
+                        description=tool.description or "",
+                        input_schema=tool.input_schema,
+                    )
                 )
-            )
-            telemetry_updates["mcpTools"].append(
-                {"server": call.server.name, "tool": call.tool_name}
-            )
 
-        return context_messages, user_messages, telemetry_updates
+        return live_servers, mcp_tool_entries
+
+    def _parse_mcp_tool_name(self, name: str) -> tuple[str, str]:
+        """Parse a namespaced MCP tool name into its server ID and tool name.
+
+        Args:
+            name: Namespaced tool name, e.g. ``mcp__3c8a1e9f__find``.
+
+        Returns:
+            Tuple of ``(server_id, tool_name)``.
+
+        Raises:
+            ValueError: If ``name`` does not follow the ``mcp__<id>__<tool>``
+                format (e.g. it is an Excel tool name or malformed string).
+        """
+        parts = name.split("__", 2)
+        if len(parts) != 3 or parts[0] != "mcp" or not parts[1] or not parts[2]:
+            raise ValueError(
+                f"Expected format 'mcp__<server_id>__<tool_name>', got '{name}'"
+            )
+        return parts[1], parts[2]
+
+    def _build_tool_result_context(self, request: ChatRequest) -> List[ChatMessage]:
+        """Convert frontend Excel tool results into LLM CONTEXT messages.
+
+        Called at the start of a re-POST request (when ``request.tool_results``
+        is non-empty). Formats each result via
+        ``_summarize_workbook_tool_result()`` and wraps it in a SYSTEM-role
+        CONTEXT ``ChatMessage`` so the LLM sees it as prior observations.
+
+        Args:
+            request: Incoming chat request that may contain ``tool_results``
+                populated by the frontend after executing Office.js tools.
+
+        Returns:
+            List of ``ChatMessage`` instances with ``role=SYSTEM`` and
+            ``kind=CONTEXT``. Returns an empty list when
+            ``request.tool_results`` is empty.
+        """
+        context: List[ChatMessage] = []
+        for tool_result in request.tool_results:
+            summary = self._summarize_workbook_tool_result(tool_result)
+            context.append(
+                self._message(MessageKind.CONTEXT, summary, role=MessageRole.SYSTEM)
+            )
+        return context
+
+    def _summarize_workbook_tool_result(self, result: WorkbookToolResult) -> str:
+        """Format a WorkbookToolResult for injection into the LLM context.
+
+        Args:
+            result: A tool result returned by the frontend.
+
+        Returns:
+            Markdown-formatted summary string.
+        """
+        if result.error:
+            return f"Excel tool '{result.tool}' returned an error: {result.error}"
+        try:
+            serialized = json.dumps(result.result, ensure_ascii=False)
+        except (TypeError, ValueError):
+            serialized = str(result.result)
+        if len(serialized) > 50000:
+            serialized = serialized[:50000] + "\u2026"
+        return f"Excel tool '{result.tool}' returned:\n{serialized}"
 
     def _augment_request(
         self, request: ChatRequest, context_messages: Sequence[ChatMessage]
@@ -351,142 +500,6 @@ class LangGraphOrchestrator:
             return request
         augmented_messages = [*request.messages, *context_messages]
         return request.model_copy(update={"messages": augmented_messages})
-
-    async def _build_plan(self, request: ChatRequest) -> PlanResult:
-        if not self._mcp_service:
-            return PlanResult(
-                steps=[
-                    "Review the latest user prompt and workbook context.",
-                    "Use the selected LLM provider directly.",
-                ]
-            )
-        servers = self._mcp_service.list_enabled_records()
-        if not servers:
-            return PlanResult(
-                steps=[
-                    "Review the latest user prompt and workbook context.",
-                    "Use the selected LLM provider directly.",
-                ]
-            )
-        clarification = self._needs_clarification(request)
-        if clarification:
-            return PlanResult(clarification=clarification)
-
-        prompt = request.prompt.strip()
-        steps = ["Review the latest user prompt and workbook context."]
-        tool_calls = await self._select_tools(prompt, servers)
-
-        if tool_calls:
-            for call in tool_calls:
-                steps.append(
-                    f"Use {call.tool_name} via {call.server.name} to {call.rationale}."
-                )
-            steps.append("Combine results with the selected LLM provider.")
-        else:
-            steps.append("Use the selected LLM provider directly.")
-
-        return PlanResult(steps=steps, tool_calls=tool_calls)
-
-    async def _select_tools(
-        self, prompt: str, servers: Sequence[MCPServerRecord]
-    ) -> List[PlannedToolCall]:
-        if not prompt or not servers:
-            return []
-        router_calls: List[PlannedToolCall] = []
-        if self._router:
-            try:
-                selections = await self._router.route(prompt, servers)
-                router_calls = self._convert_router_selections(selections, servers)
-            except Exception as exc:  # pragma: no cover
-                logger.warning("Router failed, falling back to heuristics: %s", exc)
-        if router_calls:
-            return router_calls[: self.MAX_TOOL_CALLS]
-        return self._rank_tool_candidates(prompt, servers)
-
-    def _convert_router_selections(
-        self,
-        selections: Sequence[RouterSelection],
-        servers: Sequence[MCPServerRecord],
-    ) -> List[PlannedToolCall]:
-        if not selections:
-            return []
-        server_map = {server.id: server for server in servers}
-        planned: List[PlannedToolCall] = []
-        for selection in selections:
-            server = server_map.get(selection.server_id)
-            if not server:
-                continue
-            tool = next(
-                (tool for tool in server.tools if tool.name == selection.tool_name),
-                None,
-            )
-            if not tool:
-                continue
-            planned.append(
-                PlannedToolCall(
-                    server=server,
-                    tool_name=tool.name,
-                    rationale=selection.rationale or tool.description or "gather data",
-                    tool=tool,
-                )
-            )
-        return planned
-
-    def _rank_tool_candidates(
-        self, prompt: str, servers: Sequence[MCPServerRecord]
-    ) -> List[PlannedToolCall]:
-        if not prompt:
-            return []
-        candidates: List[tuple[int, PlannedToolCall]] = []
-        normalized_prompt = prompt.lower()
-        for server in servers:
-            if not server.tools:
-                continue
-            for tool in server.tools:
-                score = self._score_tool(normalized_prompt, tool)
-                if score <= 0:
-                    continue
-                rationale = (
-                    tool.description.strip()
-                    if tool.description
-                    else "gather supporting context"
-                )
-                candidates.append(
-                    (
-                        score,
-                        PlannedToolCall(
-                            server=server,
-                            tool_name=tool.name,
-                            rationale=rationale,
-                            tool=tool,
-                        ),
-                    )
-                )
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return [item[1] for item in candidates[: self.MAX_TOOL_CALLS]]
-
-    def _format_plan(self, steps: Sequence[str]) -> str:
-        return "\n".join(f"{idx + 1}. {step}" for idx, step in enumerate(steps))
-
-    def _needs_clarification(self, request: ChatRequest) -> Optional[str]:
-        prompt = request.prompt.strip()
-        tokens = [token for token in re.split(r"\W+", prompt) if token]
-        if len(tokens) < 4 and not request.selection:
-            return "Could you provide a bit more detail so I can pick the right tools?"
-        return None
-
-    def _score_tool(self, normalized_prompt: str, tool: MCPTool) -> int:
-        score = 0
-        tool_name = tool.name.lower()
-        if tool_name in normalized_prompt:
-            score += 3
-        description = (tool.description or "").lower()
-        for token in set(normalized_prompt.split()):
-            if len(token) < 4:
-                continue
-            if token in description:
-                score += 1
-        return score
 
     def _message(
         self,
@@ -502,69 +515,6 @@ class LangGraphOrchestrator:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    async def _invoke_tool(
-        self, call: PlannedToolCall, request: ChatRequest
-    ) -> ToolInvocationResult:
-        if not self._mcp_service:
-            raise HTTPException(status_code=503, detail="MCP service unavailable.")
-        arguments = await self._build_tool_arguments(call, request)
-        logger.info(
-            "Prepared MCP arguments for %s/%s: %s",
-            call.server.name,
-            call.tool_name,
-            json.dumps(arguments, ensure_ascii=False),
-        )
-        payload = {
-            "arguments": arguments,
-            "context": self._build_tool_context(call, request),
-        }
-        result = await self._mcp_service.invoke_tool(
-            call.server.id,
-            call.tool_name,
-            payload,
-        )
-        try:
-            result_preview = json.dumps(result.response, ensure_ascii=False)
-        except (TypeError, ValueError):
-            result_preview = str(result.response)
-        logger.info(
-            "Tool %s/%s returned: %s",
-            call.server.name,
-            call.tool_name,
-            result_preview,
-        )
-        return result
-
-    def _build_tool_context(
-        self, call: PlannedToolCall, request: ChatRequest
-    ) -> Dict[str, Any]:
-        return {
-            "prompt": request.prompt,
-            "selection": [sel.model_dump(by_alias=True) for sel in request.selection],
-            "metadata": request.metadata,
-            "history": [
-                {
-                    "role": message.role.value,
-                    "kind": message.kind.value,
-                    "content": message.content,
-                }
-                for message in request.messages[-6:]
-            ],
-            "tool": call.tool_name,
-            "requestedAt": datetime.now(timezone.utc).isoformat(),
-            "rationale": call.rationale,
-        }
-
-    async def _build_tool_arguments(
-        self, call: PlannedToolCall, request: ChatRequest
-    ) -> Dict[str, Any]:
-        if not self._argument_builder:
-            return {}
-        try:
-            return await self._argument_builder.build(call, request)
-        except ToolArgumentError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
     def _summarize_tool_result(self, invocation: ToolInvocationResult) -> str:
         rows = self._extract_rows(invocation.response)
         if rows:
@@ -578,9 +528,8 @@ class LangGraphOrchestrator:
             serialized = json.dumps(invocation.response, ensure_ascii=False)
         except (TypeError, ValueError):
             serialized = str(invocation.response)
-        # Increase limit to 50000 characters to avoid truncating database results
         if len(serialized) > 50000:
-            serialized = serialized[:50000] + "…"
+            serialized = serialized[:50000] + "\u2026"
         return (
             f"Tool '{invocation.tool_name}' from {invocation.server_name} returned:\n"
             f"{serialized}"
@@ -623,7 +572,6 @@ class LangGraphOrchestrator:
         return rows
 
     def _extract_json_from_text(self, text: str) -> Optional[str]:
-        # Try to extract content from untrusted-user-data tags (with or without UUIDs)
         match = re.search(
             r"<untrusted-user-data[^>]*>(.*?)</untrusted-user-data[^>]*>",
             text,
@@ -639,14 +587,12 @@ class LangGraphOrchestrator:
             candidate = text.strip()
             logger.debug("No untrusted-user-data tags found, using full text")
 
-        # Try to find balanced JSON structures
         for opening, closing in (("[", "]"), ("{", "}")):
             blob = self._find_balanced_segment(candidate, opening, closing)
             if blob:
                 logger.debug("Found balanced %s...%s segment", opening, closing)
                 return blob
 
-        # Fallback: try JSON decoder
         result = self._decode_json_fragment(candidate)
         if result:
             logger.debug("JSON decoder found fragment")
@@ -685,13 +631,15 @@ class LangGraphOrchestrator:
         return None
 
     def _decode_json_fragment(self, text: str) -> Optional[str]:
-        decoder = json.JSONDecoder()
+        import json as _json
+
+        decoder = _json.JSONDecoder()
         for opening in ("[", "{"):
             index = text.find(opening)
             while index != -1:
                 try:
                     _, end = decoder.raw_decode(text[index:])
-                except json.JSONDecodeError:
+                except _json.JSONDecodeError:
                     index = text.find(opening, index + 1)
                     continue
                 return text[index : index + end]
@@ -728,7 +676,6 @@ class LangGraphOrchestrator:
         divider = "| " + " | ".join("---" for _ in headers) + " |"
         lines = [header_row, divider]
         for row in rows:
-            # Limit each cell value to 200 chars to prevent extremely wide tables
             values = [str(row.get(header, ""))[:200] for header in headers]
             lines.append("| " + " | ".join(values) + " |")
         logger.debug(

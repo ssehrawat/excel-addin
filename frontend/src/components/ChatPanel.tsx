@@ -1,14 +1,12 @@
 import {
   Button,
-  Field,
-  Input,
   Spinner,
   Tooltip,
   makeStyles,
   shorthands
 } from "@fluentui/react-components";
-import { Send24Filled, Settings24Regular } from "@fluentui/react-icons";
-import { FormEvent, useState } from "react";
+import { CheckmarkCircle16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../types";
 
 const useStyles = makeStyles({
@@ -26,14 +24,15 @@ const useStyles = makeStyles({
     justifyContent: "space-between",
     backgroundColor: "#ffffff"
   },
-  headerTitle: {
-    fontSize: "16px",
-    fontWeight: 600
-  },
   headerBrand: {
     display: "flex",
     alignItems: "center",
     gap: "10px"
+  },
+  headerTitle: {
+    fontSize: "16px",
+    fontWeight: 600,
+    color: "#111827"
   },
   messages: {
     flex: 1,
@@ -41,31 +40,43 @@ const useStyles = makeStyles({
     padding: "16px",
     display: "flex",
     flexDirection: "column",
-    gap: "12px"
+    gap: "10px"
   },
   messageBubble: {
-    ...shorthands.padding("12px", "14px"),
+    ...shorthands.padding("10px", "14px"),
     borderRadius: "14px",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-    maxWidth: "90%"
+    maxWidth: "88%",
+    lineHeight: "1.5",
+    fontSize: "14px",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word"
   },
   bubbleUser: {
     alignSelf: "flex-end",
     backgroundColor: "#2563eb",
-    color: "#ffffff"
+    color: "#ffffff",
+    borderRadius: "14px 14px 4px 14px"
   },
   bubbleAssistant: {
     alignSelf: "flex-start",
     backgroundColor: "#ffffff",
     color: "#111827",
-    border: "1px solid #e5e7eb"
+    border: "1px solid #e5e7eb",
+    borderRadius: "14px 14px 14px 4px"
   },
-  bubbleMeta: {
-    fontSize: "11px",
-    opacity: 0.7,
-    marginBottom: "4px",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em"
+  thinkingStep: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "4px 0",
+    fontSize: "13px",
+    alignSelf: "flex-start"
+  },
+  thinkingStepDone: {
+    color: "#10b981"
+  },
+  thinkingStepActive: {
+    color: "#6b7280"
   },
   composer: {
     borderTop: "1px solid #e4e4e4",
@@ -75,13 +86,28 @@ const useStyles = makeStyles({
   composerRow: {
     display: "flex",
     gap: "8px",
-    alignItems: "center"
+    alignItems: "flex-end"
+  },
+  textarea: {
+    flex: 1,
+    resize: "none",
+    border: "1px solid #d1d5db",
+    borderRadius: "8px",
+    padding: "10px 12px",
+    fontSize: "14px",
+    fontFamily: "inherit",
+    lineHeight: "1.5",
+    outline: "none",
+    minHeight: "44px",
+    maxHeight: "160px",
+    overflowY: "auto"
   }
 });
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   isBusy: boolean;
+  thinkingSteps: { id: string; text: string; status: "active" | "done" }[];
   // eslint-disable-next-line no-unused-vars
   onSend: (text: string) => Promise<void>;
   onOpenSettings: () => void;
@@ -90,100 +116,125 @@ interface ChatPanelProps {
 export function ChatPanel({
   messages,
   isBusy,
+  thinkingSteps,
   onSend,
   onOpenSettings
 }: ChatPanelProps) {
   const styles = useStyles();
   const [input, setInput] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-scroll to bottom whenever messages or status change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, thinkingSteps]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     const trimmed = input.trim();
-    if (!trimmed || isBusy) {
-      return;
-    }
+    if (!trimmed || isBusy) return;
     setInput("");
     await onSend(trimmed);
   };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends; Shift+Enter inserts a newline
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleSubmit(event as unknown as FormEvent);
+    }
+  };
+
+  // Only render user messages and final/message assistant answers
+  const visibleMessages = messages.filter(
+    (m) => m.role === "user" || m.kind === "final" || m.kind === "message"
+  );
 
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerBrand}>
-          <div className={styles.headerTitle}>Chat</div>
+          <div className={styles.headerTitle}>Workbook Copilot</div>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
-          {isBusy ? (
-            <Spinner size="tiny" label="Thinking..." />
-          ) : (
-            <Tooltip content="Change model provider" relationship="label">
-              <Button icon={<Settings24Regular />} onClick={onOpenSettings} />
-            </Tooltip>
-          )}
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <Tooltip content="Settings" relationship="label">
+            <Button
+              icon={<Settings24Regular />}
+              appearance="subtle"
+              onClick={onOpenSettings}
+              disabled={isBusy}
+            />
+          </Tooltip>
         </div>
       </div>
+
       <div className={styles.messages}>
-        {messages.map((message) => (
+        {visibleMessages.map((message) => (
           <div
             key={message.id}
             className={`${styles.messageBubble} ${
-              message.role === "user"
-                ? styles.bubbleUser
-                : styles.bubbleAssistant
+              message.role === "user" ? styles.bubbleUser : styles.bubbleAssistant
             }`}
           >
-            <div className={styles.bubbleMeta}>
-              {message.role === "user" ? "You" : formatKind(message.kind)}
-            </div>
-            <div>{message.content}</div>
+            {message.content}
           </div>
         ))}
-        {isBusy && (
-          <div className={`${styles.messageBubble} ${styles.bubbleAssistant}`}>
-            <div className={styles.bubbleMeta}>Assistant</div>
-            <div>Processing your request…</div>
-          </div>
-        )}
+
+        {/* Stacking thinking steps — shown while busy */}
+        {thinkingSteps.length > 0 &&
+          thinkingSteps.map((step) => (
+            <div key={step.id} className={styles.thinkingStep}>
+              {step.status === "done" ? (
+                <CheckmarkCircle16Filled className={styles.thinkingStepDone} />
+              ) : (
+                <Spinner size="extra-tiny" />
+              )}
+              <span
+                className={
+                  step.status === "done"
+                    ? styles.thinkingStepDone
+                    : styles.thinkingStepActive
+                }
+              >
+                {step.text}
+              </span>
+            </div>
+          ))}
+
+        <div ref={messagesEndRef} />
       </div>
+
       <form className={styles.composer} onSubmit={handleSubmit}>
-        <Field>
-          <div className={styles.composerRow}>
-            <Input
-              appearance="outline"
-              placeholder="Ask about your workbook…"
-              value={input}
-              onChange={(_, data) => setInput(data.value)}
-              size="large"
-            />
-            <Button
-              appearance="primary"
-              icon={<Send24Filled />}
-              type="submit"
-              disabled={isBusy || !input.trim()}
-            >
-              Send
-            </Button>
-          </div>
-        </Field>
+        <div className={styles.composerRow}>
+          <textarea
+            ref={textareaRef}
+            className={styles.textarea}
+            placeholder="Ask about your workbook… (Enter to send, Shift+Enter for newline)"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            disabled={isBusy}
+          />
+          <Button
+            appearance="primary"
+            icon={<Send24Filled />}
+            type="submit"
+            disabled={isBusy || !input.trim()}
+          >
+            Send
+          </Button>
+        </div>
       </form>
     </div>
   );
 }
-
-function formatKind(kind: ChatMessage["kind"]): string {
-  switch (kind) {
-    case "thought":
-      return "Thought";
-    case "step":
-      return "Step";
-    case "suggestion":
-      return "Suggestion";
-    case "context":
-      return "Context";
-    case "final":
-      return "Answer";
-    default:
-      return "Assistant";
-  }
-}
-

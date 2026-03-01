@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Literal, Optional, Sequence
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -24,6 +24,13 @@ def _timestamp() -> str:
 
 
 class MCPServerRecord(BaseModel):
+    """Persisted MCP server configuration.
+
+    The ``protocol`` field is kept for backwards compatibility with existing
+    ``mcp_servers.json`` files.  All values ("auto", "rest", "mcp") are now
+    treated identically — the JSON-RPC 2.0 transport is always used.
+    """
+
     id: str = Field(default_factory=lambda: uuid4().hex)
     name: str
     base_url: AnyHttpUrl
@@ -42,12 +49,24 @@ class MCPServerRecord(BaseModel):
 
 
 class MCPServerStore:
+    """Thread-safe JSON store for MCP server records.
+
+    Args:
+        path: Path to the JSON file used for persistence.
+    """
+
     def __init__(self, path: Path) -> None:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
 
     def load(self) -> List[MCPServerRecord]:
+        """Load all server records from disk.
+
+        Returns:
+            List of MCPServerRecord instances.  Returns an empty list if the
+            file does not exist or contains invalid JSON.
+        """
         with self._lock:
             if not self._path.exists():
                 return []
@@ -66,85 +85,17 @@ class MCPServerStore:
         return records
 
     def save(self, records: Sequence[MCPServerRecord]) -> None:
+        """Atomically persist records to disk.
+
+        Args:
+            records: Sequence of MCPServerRecord instances to save.
+        """
         serialized = [record.model_dump(mode="json") for record in records]
         payload = json.dumps(serialized, indent=2)
         tmp_path = self._path.with_suffix(".tmp")
         with self._lock:
             tmp_path.write_text(payload, encoding="utf-8")
             tmp_path.replace(self._path)
-
-
-class MCPHttpClient:
-    def __init__(self, timeout_seconds: int) -> None:
-        self._timeout = timeout_seconds
-
-    async def fetch_tools(self, server: MCPServerRecord) -> List[MCPTool]:
-        url = _join(server.base_url, "/tools")
-        response = await self._request("GET", url, server)
-        raw = response.json()
-        if isinstance(raw, dict):
-            tools_payload = raw.get("tools", [])
-        else:
-            tools_payload = raw
-        tools: List[MCPTool] = []
-        for item in tools_payload:
-            if not isinstance(item, dict):
-                continue
-            name = item.get("name")
-            if not name:
-                continue
-            tools.append(
-                MCPTool(
-                    name=str(name),
-                    description=item.get("description"),
-                    input_schema=item.get("input_schema")
-                    or item.get("inputSchema")
-                    or {},
-                )
-            )
-        return tools
-
-    async def invoke_tool(
-        self, server: MCPServerRecord, tool_name: str, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        url = _join(server.base_url, f"/tools/{tool_name}/invoke")
-        response = await self._request("POST", url, server, json={"input": payload})
-        data = response.json()
-        if isinstance(data, dict):
-            return data
-        return {"result": data}
-
-    async def _request(
-        self,
-        method: str,
-        url: str,
-        server: MCPServerRecord,
-        json: Optional[Dict[str, Any]] = None,
-    ) -> httpx.Response:
-        headers = {}
-        if server.api_key:
-            headers["Authorization"] = f"Bearer {server.api_key}"
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.request(
-                    method, url, headers=headers, json=json
-                )
-                response.raise_for_status()
-                return response
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "MCP server %s responded with %s on %s %s",
-                server.name,
-                exc.response.status_code,
-                method,
-                url,
-            )
-            raise
-        except httpx.RequestError as exc:
-            logger.warning(
-                "Failed to reach MCP server %s at %s: %s", server.name, url, exc
-            )
-            raise
 
 
 @dataclass
@@ -156,15 +107,29 @@ class JsonRpcSession:
 
 JSONRPC_VERSION = "2.0"
 DEFAULT_PROTOCOL_VERSION = "2025-03-26"
-CLIENT_NAME = "MyExcelCompanion"
-CLIENT_VERSION = "0.1.0"
+CLIENT_NAME = "WorkbookCopilot"
+CLIENT_VERSION = "0.2.0"
 
 
 class MCPJsonRpcClient:
+    """MCP JSON-RPC 2.0 transport client.
+
+    Args:
+        timeout_seconds: Request timeout in seconds.
+    """
+
     def __init__(self, timeout_seconds: int) -> None:
         self._timeout = timeout_seconds
 
     async def fetch_tools(self, server: MCPServerRecord) -> List[MCPTool]:
+        """Fetch the tool list from an MCP server.
+
+        Args:
+            server: The server record to query.
+
+        Returns:
+            List of MCPTool instances available on the server.
+        """
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             session = await self._initialize_session(client, server)
             try:
@@ -191,6 +156,16 @@ class MCPJsonRpcClient:
         tool_name: str,
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
+        """Invoke a tool on an MCP server.
+
+        Args:
+            server: The server record hosting the tool.
+            tool_name: Name of the tool to invoke.
+            payload: Arguments to pass to the tool.
+
+        Returns:
+            The tool's response as a dict.
+        """
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             session = await self._initialize_session(client, server)
             try:
@@ -309,7 +284,7 @@ class MCPJsonRpcClient:
         server: MCPServerRecord,
         payload: Dict[str, Any],
         session: Optional[JsonRpcSession] = None,
-    ) -> httpx.Response:
+    ) -> tuple[httpx.Response, str]:
         headers = self._build_headers(server, session)
         if session:
             response = await client.post(
@@ -428,18 +403,13 @@ class MCPJsonRpcClient:
         parsed = urlparse(base)
         path = parsed.path or ""
         if not path or path == "/":
-            urls.append(_join(server.base_url, "/mcp"))
+            urls.append(f"{base}/mcp")
         # Remove duplicates while preserving order
         deduped: List[str] = []
         for url in urls:
             if url not in deduped:
                 deduped.append(url)
         return deduped
-def _join(base: AnyHttpUrl, path: str) -> str:
-    base_url = str(base)
-    if not base_url.endswith("/"):
-        base_url = f"{base_url}/"
-    return urljoin(base_url, path.lstrip("/"))
 
 
 @dataclass
@@ -451,18 +421,36 @@ class ToolInvocationResult:
 
 
 class MCPServerService:
+    """High-level service for managing and invoking MCP servers.
+
+    Uses JSON-RPC 2.0 transport exclusively.
+
+    Args:
+        storage_path: Path to the JSON persistence file.
+        request_timeout_seconds: Per-request timeout.
+    """
+
     def __init__(self, storage_path: Path, request_timeout_seconds: int = 15) -> None:
         self._store = MCPServerStore(storage_path)
-        self._rest = MCPHttpClient(timeout_seconds=request_timeout_seconds)
         self._jsonrpc = MCPJsonRpcClient(timeout_seconds=request_timeout_seconds)
 
     def list_servers(self) -> List[MCPServerPublic]:
+        """Return all servers as public-facing models."""
         return [self.to_public(record) for record in self._store.load()]
 
     def list_enabled_records(self) -> List[MCPServerRecord]:
+        """Return only enabled server records."""
         return [record for record in self._store.load() if record.enabled]
 
     def create_server(self, payload: MCPServerCreateRequest) -> MCPServerRecord:
+        """Register a new MCP server.
+
+        Args:
+            payload: Creation request from the API.
+
+        Returns:
+            Newly created MCPServerRecord.
+        """
         records = self._store.load()
         record = MCPServerRecord(
             name=payload.name.strip(),
@@ -480,6 +468,18 @@ class MCPServerService:
     def update_server(
         self, server_id: str, payload: MCPServerUpdateRequest
     ) -> MCPServerRecord:
+        """Update an existing MCP server record.
+
+        Args:
+            server_id: ID of the server to update.
+            payload: Fields to update.
+
+        Returns:
+            Updated MCPServerRecord.
+
+        Raises:
+            HTTPException: 404 if server not found.
+        """
         records = self._store.load()
         for index, record in enumerate(records):
             if record.id != server_id:
@@ -498,6 +498,14 @@ class MCPServerService:
         raise HTTPException(status_code=404, detail="MCP server not found.")
 
     def delete_server(self, server_id: str) -> None:
+        """Delete an MCP server record.
+
+        Args:
+            server_id: ID of the server to delete.
+
+        Raises:
+            HTTPException: 404 if server not found.
+        """
         records = self._store.load()
         next_records = [record for record in records if record.id != server_id]
         if len(records) == len(next_records):
@@ -505,17 +513,52 @@ class MCPServerService:
         self._store.save(next_records)
         logger.info("Deleted MCP server %s", server_id)
 
+    async def fetch_tools_live(self, server: MCPServerRecord) -> List[MCPTool]:
+        """Fetch tools from an MCP server without persisting the result.
+
+        Unlike ``refresh_server()``, this method does NOT update
+        ``mcp_servers.json``, the server's ``status`` field, or
+        ``last_refreshed_at``. It is used exclusively by the orchestrator's
+        per-request health check to determine server reachability and obtain
+        a fresh tool list for the current request only.
+
+        Args:
+            server: The server record to query. The record's ``base_url``
+                and optional ``api_key`` are used for the connection.
+
+        Returns:
+            List of ``MCPTool`` instances returned by the live server.
+
+        Raises:
+            Any exception raised by the underlying ``MCPJsonRpcClient`` when
+            the server is unreachable, the session cannot be initialised, or
+            the ``tools/list`` RPC call fails. The caller (orchestrator) is
+            responsible for catching and handling these exceptions.
+        """
+        return await self._jsonrpc.fetch_tools(server)
+
     async def refresh_server(self, server_id: str) -> MCPServerRecord:
+        """Refresh a server's tool list via JSON-RPC.
+
+        Args:
+            server_id: ID of the server to refresh.
+
+        Returns:
+            Updated MCPServerRecord with fresh tool list.
+
+        Raises:
+            HTTPException: 502 if the server cannot be reached.
+        """
         record = self._get_record(server_id)
         try:
-            tools, protocol = await self._fetch_tools(record)
+            tools = await self._jsonrpc.fetch_tools(record)
             updated = record.model_copy(
                 update={
                     "tools": tools,
                     "status": "online",
                     "last_refreshed_at": _timestamp(),
                     "updated_at": _timestamp(),
-                    "protocol": protocol,
+                    "protocol": "mcp",
                 }
             )
         except Exception as exc:
@@ -541,13 +584,24 @@ class MCPServerService:
         tool_name: str,
         payload: Dict[str, Any],
     ) -> ToolInvocationResult:
+        """Invoke a tool on an MCP server via JSON-RPC.
+
+        Args:
+            server_id: ID of the server hosting the tool.
+            tool_name: Name of the tool to invoke.
+            payload: Arguments dict (may include an "arguments" key).
+
+        Returns:
+            ToolInvocationResult with the server response.
+
+        Raises:
+            HTTPException: 502 if the tool call fails.
+        """
         record = self._get_record(server_id)
         try:
-            response, protocol = await self._invoke_with_strategy(
-                record, tool_name, payload
-            )
-            if protocol != record.protocol:
-                record = self._update_protocol(record, protocol)
+            # Unwrap nested "arguments" key if present (legacy callers)
+            arguments = payload.get("arguments", payload)
+            response = await self._jsonrpc.invoke_tool(record, tool_name, arguments)
             return ToolInvocationResult(
                 server_id=record.id,
                 server_name=record.name,
@@ -581,77 +635,15 @@ class MCPServerService:
             records.append(updated)
         self._store.save(records)
 
-    def _strategies_for(self, protocol: str) -> List[str]:
-        if protocol == "mcp":
-            return ["mcp"]
-        if protocol == "rest":
-            return ["rest"]
-        return ["rest", "mcp"]
-
-    async def _fetch_tools(
-        self, record: MCPServerRecord
-    ) -> tuple[List[MCPTool], str]:
-        last_error: Optional[Exception] = None
-        for strategy in self._strategies_for(record.protocol):
-            try:
-                if strategy == "rest":
-                    return await self._rest.fetch_tools(record), "rest"
-                if strategy == "mcp":
-                    return await self._jsonrpc.fetch_tools(record), "mcp"
-            except Exception as exc:
-                last_error = exc
-                logger.debug(
-                    "Strategy %s failed for server '%s': %s",
-                    strategy,
-                    record.name,
-                    exc,
-                )
-        if last_error:
-            raise last_error
-        raise RuntimeError("No MCP transport strategies available.")
-
-    async def _invoke_with_strategy(
-        self,
-        record: MCPServerRecord,
-        tool_name: str,
-        payload: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], str]:
-        last_error: Optional[Exception] = None
-        for strategy in self._strategies_for(record.protocol):
-            try:
-                if strategy == "rest":
-                    result = await self._rest.invoke_tool(record, tool_name, payload)
-                else:
-                    arguments = payload.get("arguments", payload)
-                    result = await self._jsonrpc.invoke_tool(
-                        record, tool_name, arguments
-                    )
-                return result, strategy
-            except Exception as exc:
-                last_error = exc
-                logger.debug(
-                    "Strategy %s failed for tool '%s' on server '%s': %s",
-                    strategy,
-                    tool_name,
-                    record.name,
-                    exc,
-                )
-        if last_error:
-            raise last_error
-        raise RuntimeError("No MCP transport strategies available.")
-
-    def _update_protocol(
-        self, record: MCPServerRecord, protocol: str
-    ) -> MCPServerRecord:
-        if protocol == record.protocol:
-            return record
-        updated = record.model_copy(
-            update={"protocol": protocol, "updated_at": _timestamp()}
-        )
-        self._replace_record(updated)
-        return updated
-
     def to_public(self, record: MCPServerRecord) -> MCPServerPublic:
+        """Convert an internal record to the public API model.
+
+        Args:
+            record: Internal MCPServerRecord.
+
+        Returns:
+            MCPServerPublic suitable for API responses.
+        """
         return MCPServerPublic(
             id=record.id,
             name=record.name,
@@ -665,4 +657,3 @@ class MCPServerService:
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
-
