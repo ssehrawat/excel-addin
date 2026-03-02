@@ -1,0 +1,19 @@
+{
+  "answer": "Chart created.",
+  "cell_updates": [],
+  "format_updates": [
+    {
+      "address": "A1:A10",
+      "fillColor": "#FFFF00"
+    }
+  ],
+  "chart_inserts": [
+    {
+      "chartType": "scatterplot",
+      "sourceAddress": "B1:C10",
+      "xAxisTitle": "X",
+      "yAxisTitle": "Y",
+      "seriesBy": "rows"
+    }
+  ]
+}

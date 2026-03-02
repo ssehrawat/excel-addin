@@ -1,0 +1,11 @@
+{
+  "needs_data": true,
+  "tool_call": {
+    "tool": "get_xl_range_as_csv",
+    "args": {
+      "sheetName": "Sales",
+      "range": "A1:D200",
+      "maxRows": 200
+    }
+  }
+}

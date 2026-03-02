@@ -1,0 +1,10 @@
+{
+  "needs_data": true,
+  "tool_call": {
+    "tool": "mcp__srv123__find_customers",
+    "args": {
+      "query": "region = EMEA",
+      "limit": 50
+    }
+  }
+}

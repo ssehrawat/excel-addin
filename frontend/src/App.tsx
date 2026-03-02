@@ -48,7 +48,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   }
 ];
 
-async function readApiError(res: Response): Promise<string> {
+export async function readApiError(res: Response): Promise<string> {
   try {
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType.includes("application/json")) {
@@ -75,7 +75,7 @@ async function readApiError(res: Response): Promise<string> {
   }
 }
 
-function formatNetworkError(error: unknown, baseUrl: string): string {
+export function formatNetworkError(error: unknown, baseUrl: string): string {
   if (error instanceof TypeError) {
     const msg = error.message || "";
     if (msg.toLowerCase().includes("fetch")) {

@@ -8,6 +8,9 @@
     "build": "webpack --config webpack.config.js --mode production",
     "lint": "eslint --ext .ts,.tsx src",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dev:cert": "office-addin-dev-certs install --days 365 --domains localhost,127.0.0.1",
     "dev:cert:machine": "office-addin-dev-certs install --machine --days 365 --domains localhost,127.0.0.1"
   },
@@ -19,26 +22,31 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.5.2",
     "@types/node": "^20.11.19",
     "@types/office-js": "^1.0.99",
     "@types/react": "^18.2.37",
     "@types/react-dom": "^18.2.15",
-    "copy-webpack-plugin": "^11.0.0",
-    "css-loader": "^6.8.1",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
     "@typescript-eslint/parser": "^6.15.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "copy-webpack-plugin": "^11.0.0",
+    "css-loader": "^6.8.1",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-react": "^7.33.2",
     "html-webpack-plugin": "^5.5.3",
+    "jsdom": "^25.0.1",
     "mini-css-extract-plugin": "^2.7.6",
     "office-addin-dev-certs": "^1.13.4",
     "style-loader": "^3.3.3",
     "ts-loader": "^9.5.0",
     "typescript": "^5.3.3",
+    "vitest": "^2.1.8",
     "webpack": "^5.89.0",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^4.15.1"
   }
 }
-
