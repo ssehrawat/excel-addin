@@ -1,0 +1,17 @@
+{
+  "answer": "I've added the SUM formula in E2.",
+  "cell_updates": [
+    {
+      "address": "Sheet1!E2",
+      "values": [["=SUM(A2:D2)"]],
+      "mode": "replace"
+    },
+    {
+      "address": "Sheet1!E3",
+      "values": [["=SUM(A3:D3)"]],
+      "mode": "replace"
+    }
+  ],
+  "format_updates": [],
+  "chart_inserts": []
+}

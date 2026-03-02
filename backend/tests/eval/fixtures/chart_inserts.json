@@ -1,0 +1,16 @@
+{
+  "answer": "Here's a scatter chart of your data.",
+  "cell_updates": [],
+  "format_updates": [],
+  "chart_inserts": [
+    {
+      "chartType": "scatter",
+      "sourceAddress": "A1:B20",
+      "sourceWorksheet": "Data",
+      "title": "Revenue vs Units",
+      "xAxisTitle": "Units Sold",
+      "yAxisTitle": "Revenue ($)",
+      "seriesBy": "columns"
+    }
+  ]
+}

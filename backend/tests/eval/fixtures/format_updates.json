@@ -1,0 +1,13 @@
+{
+  "answer": "I've highlighted the header row.",
+  "cell_updates": [],
+  "format_updates": [
+    {
+      "address": "A1:D1",
+      "fillColor": "#4472C4",
+      "fontColor": "#FFFFFF",
+      "bold": true
+    }
+  ],
+  "chart_inserts": []
+}
