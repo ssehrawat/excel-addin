@@ -5,6 +5,8 @@ import {
   CellUpdate,
   ChartInsert,
   FormatUpdate,
+  PivotTableInsert,
+  PivotTableDataField,
   SheetMetadata,
   UserContext,
   WorkbookMetadata,
@@ -778,6 +780,155 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
         }
       } catch (error) {
         console.error("Unable to insert chart", insert, error);
+      }
+    }
+    await context.sync();
+  });
+}
+
+const AGGREGATION_FUNCTION_MAP: Record<string, Excel.AggregationFunction> = {
+  sum: Excel.AggregationFunction.sum,
+  count: Excel.AggregationFunction.count,
+  average: Excel.AggregationFunction.average,
+  max: Excel.AggregationFunction.max,
+  min: Excel.AggregationFunction.min,
+  product: Excel.AggregationFunction.product,
+  countNumbers: Excel.AggregationFunction.countNumbers,
+  standardDeviation: Excel.AggregationFunction.standardDeviation,
+  standardDeviationP: Excel.AggregationFunction.standardDeviationP,
+  variance: Excel.AggregationFunction.variance,
+  varianceP: Excel.AggregationFunction.varianceP
+};
+
+/**
+ * Create pivot tables in Excel from the LLM response.
+ * Uses the Office.js PivotTable API (ExcelApi 1.8+) to add pivot tables
+ * and configure row, column, data, and filter hierarchies.
+ *
+ * @param inserts - Array of PivotTableInsert definitions from the LLM.
+ */
+export async function insertPivotTables(
+  inserts: PivotTableInsert[]
+): Promise<void> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return;
+  }
+  if (inserts.length === 0) {
+    return;
+  }
+
+  await Excel.run(async (context) => {
+    for (const insert of inserts) {
+      try {
+        // Resolve source range
+        const { sheetName: inferredSheet, rangeAddress } = splitReference(
+          insert.sourceAddress
+        );
+        const sourceSheetName =
+          normalizeSheetName(insert.sourceWorksheet ?? undefined) ??
+          inferredSheet;
+        const sourceWorksheet =
+          sourceSheetName != null
+            ? context.workbook.worksheets.getItem(sourceSheetName)
+            : context.workbook.worksheets.getActiveWorksheet();
+        const sourceRange = sourceWorksheet.getRange(rangeAddress);
+
+        // Resolve destination sheet — default to source sheet, create if needed
+        const destSheetName = normalizeSheetName(
+          insert.destinationWorksheet ?? undefined
+        );
+        let destWorksheet: Excel.Worksheet;
+        if (destSheetName != null) {
+          // User/LLM requested a specific sheet — create it if missing
+          const existing = context.workbook.worksheets.getItemOrNullObject(destSheetName);
+          existing.load("isNullObject");
+          await context.sync();
+          destWorksheet = existing.isNullObject
+            ? context.workbook.worksheets.add(destSheetName)
+            : existing;
+        } else {
+          destWorksheet = sourceWorksheet;
+        }
+
+        // Resolve destination cell — if not specified, find empty area to the right of data
+        let destRange: Excel.Range;
+        if (insert.destinationAddress) {
+          destRange = destWorksheet.getRange(insert.destinationAddress);
+        } else {
+          // Place 2 columns to the right of used data to avoid overlap
+          const usedRange = destWorksheet.getUsedRangeOrNullObject();
+          usedRange.load(["isNullObject", "columnIndex", "columnCount"]);
+          await context.sync();
+          if (!usedRange.isNullObject) {
+            const destCol = usedRange.columnIndex + usedRange.columnCount + 1;
+            destRange = destWorksheet.getCell(0, destCol);
+          } else {
+            destRange = destWorksheet.getRange("A1");
+          }
+        }
+
+        // Create the pivot table
+        const pivotTable = destWorksheet.pivotTables.add(
+          insert.name,
+          sourceRange,
+          destRange
+        );
+
+        // Add row hierarchies
+        for (const rowField of insert.rows ?? []) {
+          try {
+            pivotTable.rowHierarchies.add(
+              pivotTable.hierarchies.getItem(rowField)
+            );
+          } catch (err) {
+            console.warn(`Could not add row hierarchy "${rowField}":`, err);
+          }
+        }
+
+        // Add column hierarchies
+        for (const colField of insert.columns ?? []) {
+          try {
+            pivotTable.columnHierarchies.add(
+              pivotTable.hierarchies.getItem(colField)
+            );
+          } catch (err) {
+            console.warn(`Could not add column hierarchy "${colField}":`, err);
+          }
+        }
+
+        // Add data (values) hierarchies
+        for (const dataField of insert.values ?? []) {
+          try {
+            const dataHierarchy = pivotTable.dataHierarchies.add(
+              pivotTable.hierarchies.getItem(dataField.name)
+            );
+            const aggKey = dataField.summarizeBy ?? "sum";
+            if (aggKey in AGGREGATION_FUNCTION_MAP) {
+              dataHierarchy.summarizeBy = AGGREGATION_FUNCTION_MAP[aggKey];
+            }
+          } catch (err) {
+            console.warn(
+              `Could not add data hierarchy "${dataField.name}":`,
+              err
+            );
+          }
+        }
+
+        // Add filter hierarchies
+        for (const filterField of insert.filters ?? []) {
+          try {
+            pivotTable.filterHierarchies.add(
+              pivotTable.hierarchies.getItem(filterField)
+            );
+          } catch (err) {
+            console.warn(
+              `Could not add filter hierarchy "${filterField}":`,
+              err
+            );
+          }
+        }
+      } catch (error) {
+        console.error("Unable to insert pivot table", insert, error);
       }
     }
     await context.sync();

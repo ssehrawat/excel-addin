@@ -21,6 +21,7 @@ from app.providers import (
     build_cell_updates,
     build_chart_inserts,
     build_format_updates,
+    build_pivot_table_inserts,
     build_prompt_payload,
     build_system_prompt,
     parse_structured_response,
@@ -315,6 +316,13 @@ class TestAssembleMessagesFromPayload:
         msgs = assemble_messages_from_payload(payload, "prompt")
         assert len(msgs) == 1
         assert msgs[0].kind == MessageKind.FINAL
+        assert "best effort" in msgs[0].content
+
+    def test_missing_answer_with_mutations_says_done(self):
+        payload = {"pivot_table_inserts": [{"name": "PT1"}]}
+        msgs = assemble_messages_from_payload(payload, "create a pivot table")
+        assert len(msgs) == 1
+        assert msgs[0].content == "Done."
 
     def test_always_final_kind(self):
         payload = {"answer": "hi"}
@@ -352,6 +360,11 @@ class TestBuildSystemPrompt:
     def test_response_format_present(self):
         prompt = build_system_prompt([])
         assert "RESPONSE FORMAT" in prompt
+
+    def test_pivot_table_rules_present(self):
+        prompt = build_system_prompt([])
+        assert "RULES FOR PIVOT TABLE INSERTS" in prompt
+        assert "pivot_table_inserts" in prompt
 
 
 # ---- build_prompt_payload ----
@@ -496,6 +509,18 @@ class TestMockProvider:
         result = await MockProvider().generate(request)
         assert result.cell_updates == []
 
+    @pytest.mark.asyncio
+    async def test_pivot_keyword_triggers_pivot_insert(self):
+        request = ChatRequest(
+            prompt="create a pivot table",
+            provider="mock",
+            messages=[],
+            selection=[CellSelection(address="A1:D20", values=[[1, 2, 3, 4]])],
+        )
+        result = await MockProvider().generate(request)
+        assert len(result.pivot_table_inserts) >= 1
+        assert result.pivot_table_inserts[0].name == "MockPivotTable"
+
 
 # ---- _normalize_identifier ----
 
@@ -510,3 +535,94 @@ class TestNormalizeIdentifier:
 
     def test_lowercases(self):
         assert _normalize_identifier("COLUMN") == "column"
+
+
+# ---- build_pivot_table_inserts ----
+
+class TestBuildPivotTableInserts:
+    """Converting raw LLM pivot_table_inserts into PivotTableInsert models."""
+
+    def test_valid_minimal(self):
+        raw = [{"name": "PT1", "sourceAddress": "A1:D100"}]
+        inserts = build_pivot_table_inserts(raw)
+        assert len(inserts) == 1
+        assert inserts[0].name == "PT1"
+        assert inserts[0].source_address == "A1:D100"
+
+    def test_camelcase_keys(self):
+        raw = [{
+            "name": "PT1",
+            "sourceAddress": "A1:D50",
+            "sourceWorksheet": "Data",
+            "destinationAddress": "F1",
+            "destinationWorksheet": "Summary",
+        }]
+        inserts = build_pivot_table_inserts(raw)
+        assert inserts[0].source_worksheet == "Data"
+        assert inserts[0].destination_address == "F1"
+        assert inserts[0].destination_worksheet == "Summary"
+
+    def test_missing_name_skipped(self):
+        raw = [{"sourceAddress": "A1:D100"}]
+        assert build_pivot_table_inserts(raw) == []
+
+    def test_missing_source_skipped(self):
+        raw = [{"name": "PT1"}]
+        assert build_pivot_table_inserts(raw) == []
+
+    def test_values_with_aggregation(self):
+        raw = [{
+            "name": "PT1",
+            "sourceAddress": "A1:D100",
+            "values": [{"name": "Revenue", "summarizeBy": "average"}],
+        }]
+        inserts = build_pivot_table_inserts(raw)
+        assert len(inserts[0].values) == 1
+        assert inserts[0].values[0].name == "Revenue"
+        assert inserts[0].values[0].summarize_by.value == "average"
+
+    def test_string_values_default_sum(self):
+        raw = [{
+            "name": "PT1",
+            "sourceAddress": "A1:D100",
+            "values": ["Revenue", "Quantity"],
+        }]
+        inserts = build_pivot_table_inserts(raw)
+        assert len(inserts[0].values) == 2
+        assert inserts[0].values[0].summarize_by.value == "sum"
+        assert inserts[0].values[1].name == "Quantity"
+
+    def test_avg_alias(self):
+        raw = [{
+            "name": "PT1",
+            "sourceAddress": "A1:D100",
+            "values": [{"name": "Price", "summarizeBy": "avg"}],
+        }]
+        inserts = build_pivot_table_inserts(raw)
+        assert inserts[0].values[0].summarize_by.value == "average"
+
+    def test_rows_columns_filters(self):
+        raw = [{
+            "name": "PT1",
+            "sourceAddress": "A1:D100",
+            "rows": ["Region"],
+            "columns": ["Quarter"],
+            "filters": ["Category"],
+        }]
+        inserts = build_pivot_table_inserts(raw)
+        assert inserts[0].rows == ["Region"]
+        assert inserts[0].columns == ["Quarter"]
+        assert inserts[0].filters == ["Category"]
+
+    def test_none_input(self):
+        assert build_pivot_table_inserts(None) == []
+
+    def test_non_dict_skipped(self):
+        raw = ["not a dict", 42]
+        assert build_pivot_table_inserts(raw) == []
+
+    def test_destination_defaults(self):
+        raw = [{"name": "PT1", "sourceAddress": "A1:D100"}]
+        inserts = build_pivot_table_inserts(raw)
+        assert inserts[0].destination_address is None
+        assert inserts[0].destination_worksheet is None

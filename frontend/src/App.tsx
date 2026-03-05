@@ -14,6 +14,7 @@ import {
   ChatRequest,
   ChatResponse,
   ChartInsert,
+  PivotTableInsert,
   ProviderOption,
   CellUpdate,
   FormatUpdate,
@@ -29,6 +30,7 @@ import {
   applyCellUpdates,
   applyFormatUpdates,
   insertCharts,
+  insertPivotTables,
   getCurrentSelection,
   getSelectionsFromPrompt,
   getWorkbookMetadata,
@@ -101,6 +103,7 @@ interface StreamRoundResult {
   cellUpdates: CellUpdate[];
   formatUpdates: FormatUpdate[];
   chartInserts: ChartInsert[];
+  pivotTableInserts: PivotTableInsert[];
   telemetry: Telemetry | null;
   /** Non-null when the LLM requested Excel tool data. */
   toolCallRequired: WorkbookToolCall[] | null;
@@ -309,6 +312,7 @@ export function App() {
       cellUpdates: [],
       formatUpdates: [],
       chartInserts: [],
+      pivotTableInserts: [],
       telemetry: null,
       toolCallRequired: null
     };
@@ -360,6 +364,11 @@ export function App() {
           case "chart_inserts":
             if (event.payload?.length) {
               result.chartInserts = result.chartInserts.concat(event.payload);
+            }
+            break;
+          case "pivot_table_inserts":
+            if (event.payload?.length) {
+              result.pivotTableInserts = result.pivotTableInserts.concat(event.payload);
             }
             break;
           case "telemetry":
@@ -435,6 +444,9 @@ export function App() {
       }
       if (json.chart_inserts?.length) {
         result.chartInserts = json.chart_inserts;
+      }
+      if (json.pivot_table_inserts?.length) {
+        result.pivotTableInserts = json.pivot_table_inserts;
       }
     }
 
@@ -550,6 +562,7 @@ export function App() {
       let allCellUpdates: CellUpdate[] = [];
       let allFormatUpdates: FormatUpdate[] = [];
       let allChartInserts: ChartInsert[] = [];
+      let allPivotTableInserts: PivotTableInsert[] = [];
       let pendingTelemetry: Telemetry | null = null;
 
       // Up to MAX_TOOL_ROUNDS of tool-call round-trips
@@ -567,6 +580,7 @@ export function App() {
         allCellUpdates = allCellUpdates.concat(roundResult.cellUpdates);
         allFormatUpdates = allFormatUpdates.concat(roundResult.formatUpdates);
         allChartInserts = allChartInserts.concat(roundResult.chartInserts);
+        allPivotTableInserts = allPivotTableInserts.concat(roundResult.pivotTableInserts);
         if (roundResult.telemetry) {
           pendingTelemetry = roundResult.telemetry;
         }
@@ -597,6 +611,9 @@ export function App() {
       }
       if (allChartInserts.length > 0) {
         await insertCharts(allChartInserts);
+      }
+      if (allPivotTableInserts.length > 0) {
+        await insertPivotTables(allPivotTableInserts);
       }
       if (pendingTelemetry) {
         console.debug("Chat telemetry", pendingTelemetry);

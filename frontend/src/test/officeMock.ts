@@ -38,6 +38,21 @@ const BorderIndex: Record<string, string> = {
   edgeRight: "EdgeRight",
 };
 
+// --- Excel.AggregationFunction enum stub ---
+const AggregationFunction: Record<string, string> = {
+  sum: "Sum",
+  count: "Count",
+  average: "Average",
+  max: "Max",
+  min: "Min",
+  product: "Product",
+  countNumbers: "CountNumbers",
+  standardDeviation: "StandardDeviation",
+  standardDeviationP: "StandardDeviationP",
+  variance: "Variance",
+  varianceP: "VarianceP",
+};
+
 // --- Excel.run stub ---
 const excelRun = vi.fn(async (callback: (context: any) => Promise<any>) => {
   // Default: no-op context. Override in individual tests.
@@ -62,6 +77,7 @@ const excelRun = vi.fn(async (callback: (context: any) => Promise<any>) => {
   ChartType,
   ChartSeriesBy,
   BorderIndex,
+  AggregationFunction,
   run: excelRun,
 };
 
@@ -81,4 +97,4 @@ const excelRun = vi.fn(async (callback: (context: any) => Promise<any>) => {
   }),
 };
 
-export { excelRun, ChartType, ChartSeriesBy, BorderIndex };
+export { excelRun, ChartType, ChartSeriesBy, BorderIndex, AggregationFunction };

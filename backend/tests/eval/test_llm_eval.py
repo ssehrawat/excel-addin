@@ -20,6 +20,7 @@ from app.providers import (
     build_cell_updates,
     build_chart_inserts,
     build_format_updates,
+    build_pivot_table_inserts,
     parse_structured_response,
 )
 from app.schemas import MessageKind
@@ -212,3 +213,42 @@ class TestCamelCaseVariants:
         parsed = parse_structured_response(payload)
         inserts = build_chart_inserts(parsed["chart_inserts"])
         assert inserts[0].series_by.value == "rows"
+
+
+class TestPivotTableInserts:
+    """Fixture: pivot_table_inserts.json — pivot table with full hierarchy config."""
+
+    @pytest.fixture
+    def payload(self):
+        return _load_fixture("pivot_table_inserts.json")
+
+    def test_parsed(self, payload):
+        parsed = parse_structured_response(payload)
+        inserts = build_pivot_table_inserts(parsed["pivot_table_inserts"])
+        assert len(inserts) == 1
+        assert inserts[0].name == "SalesPivot"
+
+    def test_hierarchies(self, payload):
+        parsed = parse_structured_response(payload)
+        inserts = build_pivot_table_inserts(parsed["pivot_table_inserts"])
+        assert inserts[0].rows == ["Region"]
+        assert inserts[0].columns == ["Quarter"]
+        assert inserts[0].filters == ["Category"]
+
+    def test_values_and_aggregation(self, payload):
+        parsed = parse_structured_response(payload)
+        inserts = build_pivot_table_inserts(parsed["pivot_table_inserts"])
+        values = inserts[0].values
+        assert len(values) == 2
+        assert values[0].name == "Revenue"
+        assert values[0].summarize_by.value == "sum"
+        assert values[1].name == "Quantity"
+        assert values[1].summarize_by.value == "average"
+
+    def test_source_and_destination(self, payload):
+        parsed = parse_structured_response(payload)
+        inserts = build_pivot_table_inserts(parsed["pivot_table_inserts"])
+        assert inserts[0].source_address == "A1:D100"
+        assert inserts[0].source_worksheet == "Sales"
+        assert inserts[0].destination_address == "F1"
+        assert inserts[0].destination_worksheet == "Summary"

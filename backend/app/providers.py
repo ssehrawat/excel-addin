@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from .config import get_settings
 from .schemas import (
+    AggregationFunction,
     ChartInsert,
     ChartSeriesBy,
     ChatMessage,
@@ -32,6 +33,8 @@ from .schemas import (
     FormatUpdate,
     MessageKind,
     MessageRole,
+    PivotTableDataField,
+    PivotTableInsert,
     Telemetry,
     WorkbookToolCall,
 )
@@ -172,7 +175,7 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
     parts.append(
         "RESPONSE FORMAT — Option A (direct answer):\n"
         "{\"answer\": \"...\", \"cell_updates\": [...], \"format_updates\": [...], "
-        "\"chart_inserts\": [...]}\n\n"
+        "\"chart_inserts\": [...], \"pivot_table_inserts\": [...]}\n\n"
         f"RESPONSE FORMAT — Option B (needs more data):\n{option_b}\n\n"
     )
 
@@ -202,6 +205,26 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "chart.axes.categoryAxis.title.visible = true; chart.axes.valueAxis.title.text = 'Y Axis'; "
         "chart.axes.valueAxis.title.visible = true; await context.sync();"
         '"}}}\n'
+        "RULES FOR PIVOT TABLE INSERTS: Only include when user EXPLICITLY requests a pivot table. "
+        "Every pivot table insert MUST include `name` (unique identifier) and `sourceAddress` "
+        "(data range in A1 notation). By default the pivot table is placed on the active sheet "
+        "in an empty area next to the data — do NOT include `destinationAddress` or "
+        "`destinationWorksheet` unless the user explicitly specifies where to put it. "
+        "If the user asks to place it on a new sheet, set `destinationWorksheet` to a descriptive name. "
+        "Infer the pivot structure (rows, columns, values, filters) from the user's request "
+        "and the sheet preview data. Do NOT ask the user to specify fields that can be "
+        "reasonably inferred from context. Use the column headers visible in the sheet preview "
+        "to determine sourceAddress and map fields to rows/columns/values as the user's "
+        "description implies. "
+        "Include `rows`, `columns`, `values`, and `filters` arrays "
+        "to define the pivot table structure. Each entry in `values` must have `name` (column "
+        "header) and optionally `summarizeBy` (sum, count, average, max, min, product, "
+        "countNumbers, standardDeviation, standardDeviationP, variance, varianceP). "
+        "Example:\n"
+        '{"pivot_table_inserts": [{"name": "SalesPivot", "sourceAddress": "A1:D100", '
+        '"rows": ["Region"], "columns": ["Quarter"], '
+        '"values": [{"name": "Revenue", "summarizeBy": "sum"}], '
+        '"filters": ["Category"]}]}\n'
         "Return strictly valid JSON with fully expanded arrays — no code or list comprehensions."
     )
 
@@ -251,6 +274,7 @@ class ProviderResult:
     cell_updates: List[CellUpdate] = field(default_factory=list)
     format_updates: List[FormatUpdate] = field(default_factory=list)
     chart_inserts: List[ChartInsert] = field(default_factory=list)
+    pivot_table_inserts: List[PivotTableInsert] = field(default_factory=list)
     telemetry: Optional[Telemetry] = None
     tool_call_required: Optional[WorkbookToolCall] = None
 
@@ -261,6 +285,7 @@ class ProviderResult:
             cell_updates=self.cell_updates,
             format_updates=self.format_updates,
             chart_inserts=self.chart_inserts,
+            pivot_table_inserts=self.pivot_table_inserts,
             telemetry=self.telemetry,
         )
 
@@ -335,6 +360,15 @@ async def _stream_result(result: ProviderResult) -> AsyncIterator[ProviderStream
             "type": "chart_inserts",
             "payload": [
                 item.model_dump(by_alias=True) for item in result.chart_inserts
+            ],
+        }
+    if result.pivot_table_inserts:
+        await asyncio.sleep(STREAM_MESSAGE_DELAY_SECONDS)
+        yield {
+            "type": "pivot_table_inserts",
+            "payload": [
+                item.model_dump(by_alias=True)
+                for item in result.pivot_table_inserts
             ],
         }
     if result.telemetry:
@@ -432,6 +466,23 @@ class MockProvider:
                 )
             )
 
+        pivot_table_inserts: List[PivotTableInsert] = []
+        if request.selection and "pivot" in request.prompt.lower():
+            pivot_table_inserts.append(
+                PivotTableInsert(
+                    name="MockPivotTable",
+                    source_address=request.selection[0].address,
+                    source_worksheet=request.selection[0].worksheet,
+                    rows=["Category"],
+                    values=[
+                        PivotTableDataField(
+                            name="Amount",
+                            summarize_by=AggregationFunction.SUM,
+                        )
+                    ],
+                )
+            )
+
         telemetry = Telemetry(provider=self.id, model="mock-local", latency_ms=5)
 
         return ProviderResult(
@@ -439,6 +490,7 @@ class MockProvider:
             cell_updates=cell_updates,
             format_updates=format_updates,
             chart_inserts=chart_inserts,
+            pivot_table_inserts=pivot_table_inserts,
             telemetry=telemetry,
         )
 
@@ -553,12 +605,16 @@ class OpenAIProvider:
         cell_updates = build_cell_updates(parsed.get("cell_updates", []))
         format_updates = build_format_updates(parsed.get("format_updates", []))
         chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
+        pivot_table_inserts = build_pivot_table_inserts(
+            parsed.get("pivot_table_inserts", [])
+        )
 
         return ProviderResult(
             messages=provider_messages,
             cell_updates=cell_updates,
             format_updates=format_updates,
             chart_inserts=chart_inserts,
+            pivot_table_inserts=pivot_table_inserts,
             telemetry=telemetry,
         )
 
@@ -581,7 +637,7 @@ class OpenAIProvider:
         Yields:
             ProviderStreamEvent dicts (message_start, message_delta,
             message_done, cell_updates, format_updates,
-            chart_inserts, telemetry).
+            chart_inserts, pivot_table_inserts, telemetry).
         """
         async for event in _stream_result(result):
             yield event
@@ -675,12 +731,16 @@ class AnthropicProvider:
         cell_updates = build_cell_updates(parsed.get("cell_updates", []))
         format_updates = build_format_updates(parsed.get("format_updates", []))
         chart_inserts = build_chart_inserts(parsed.get("chart_inserts", []))
+        pivot_table_inserts = build_pivot_table_inserts(
+            parsed.get("pivot_table_inserts", [])
+        )
 
         return ProviderResult(
             messages=provider_messages,
             cell_updates=cell_updates,
             format_updates=format_updates,
             chart_inserts=chart_inserts,
+            pivot_table_inserts=pivot_table_inserts,
             telemetry=telemetry,
         )
 
@@ -703,7 +763,7 @@ class AnthropicProvider:
         Yields:
             ProviderStreamEvent dicts (message_start, message_delta,
             message_done, cell_updates, format_updates,
-            chart_inserts, telemetry).
+            chart_inserts, pivot_table_inserts, telemetry).
         """
         async for event in _stream_result(result):
             yield event
@@ -821,6 +881,7 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
         "cell_updates": [],
         "format_updates": [],
         "chart_inserts": [],
+        "pivot_table_inserts": [],
     }
 
 
@@ -856,12 +917,24 @@ def assemble_messages_from_payload(
 
     # Ensure we always have a final answer
     if not any(msg.kind == MessageKind.FINAL for msg in messages):
+        # If the payload contains mutations the LLM performed an action;
+        # use a concise confirmation instead of echoing the prompt.
+        has_mutations = any(
+            payload.get(k)
+            for k in (
+                "cell_updates",
+                "format_updates",
+                "chart_inserts",
+                "pivot_table_inserts",
+            )
+        )
+        fallback = "Done." if has_mutations else f"Here is my best effort answer to: {prompt}"
         messages.append(
             ChatMessage(
                 id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
-                content=f"Here is my best effort answer to: {prompt}",
+                content=fallback,
                 created_at=_timestamp(),
             )
         )
@@ -1021,6 +1094,123 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
         except ValidationError as error:
             logger.warning(
                 "Skipping invalid chart insert %s due to validation error: %s",
+                candidate,
+                error,
+            )
+    return inserts
+
+
+AGGREGATION_ALIASES: Dict[str, str] = {
+    "avg": "average",
+    "mean": "average",
+    "cnt": "count",
+    "total": "sum",
+    "std": "standardDeviation",
+    "stdev": "standardDeviation",
+    "stdevp": "standardDeviationP",
+    "var": "variance",
+    "varp": "varianceP",
+    "countnums": "countNumbers",
+}
+
+_VALID_AGGREGATIONS = {item.value for item in AggregationFunction}
+
+
+def _normalize_aggregation(raw: Any) -> str:
+    """Normalize an aggregation function string to a valid AggregationFunction value."""
+    if not isinstance(raw, str):
+        return "sum"
+    lowered = raw.strip().lower()
+    if lowered in AGGREGATION_ALIASES:
+        lowered = AGGREGATION_ALIASES[lowered]
+    if lowered in _VALID_AGGREGATIONS:
+        return lowered
+    return "sum"
+
+
+def build_pivot_table_inserts(raw_inserts: Any) -> List[PivotTableInsert]:
+    """Parse raw LLM pivot_table_inserts into PivotTableInsert models.
+
+    Args:
+        raw_inserts: Raw value from the LLM response (should be a list of dicts).
+
+    Returns:
+        List of valid PivotTableInsert instances.
+    """
+    inserts: List[PivotTableInsert] = []
+    for candidate in _ensure_iterable(raw_inserts):
+        if not isinstance(candidate, dict):
+            continue
+        name = candidate.get("name")
+        source_address = candidate.get("source_address") or candidate.get(
+            "sourceAddress"
+        )
+        if not name or not source_address:
+            logger.warning(
+                "Skipping pivot table insert missing name or sourceAddress: %s",
+                candidate,
+            )
+            continue
+
+        source_worksheet = candidate.get("source_worksheet") or candidate.get(
+            "sourceWorksheet"
+        )
+        destination_address = (
+            candidate.get("destination_address")
+            or candidate.get("destinationAddress")
+            or None
+        )
+        destination_worksheet = candidate.get(
+            "destination_worksheet"
+        ) or candidate.get("destinationWorksheet")
+        rows = candidate.get("rows", [])
+        if not isinstance(rows, list):
+            rows = []
+        columns = candidate.get("columns", [])
+        if not isinstance(columns, list):
+            columns = []
+        filters = candidate.get("filters", [])
+        if not isinstance(filters, list):
+            filters = []
+
+        raw_values = candidate.get("values", [])
+        if not isinstance(raw_values, list):
+            raw_values = []
+        data_fields: List[PivotTableDataField] = []
+        for val in raw_values:
+            if isinstance(val, str):
+                data_fields.append(
+                    PivotTableDataField(name=val, summarize_by=AggregationFunction.SUM)
+                )
+            elif isinstance(val, dict):
+                field_name = val.get("name")
+                if not field_name:
+                    continue
+                agg = _normalize_aggregation(val.get("summarizeBy") or val.get("summarize_by"))
+                data_fields.append(
+                    PivotTableDataField(
+                        name=field_name,
+                        summarize_by=AggregationFunction(agg),
+                    )
+                )
+
+        try:
+            inserts.append(
+                PivotTableInsert(
+                    name=name,
+                    source_address=source_address,
+                    source_worksheet=source_worksheet,
+                    destination_address=destination_address,
+                    destination_worksheet=destination_worksheet,
+                    rows=rows,
+                    columns=columns,
+                    values=data_fields,
+                    filters=filters,
+                )
+            )
+        except ValidationError as error:
+            logger.warning(
+                "Skipping invalid pivot table insert %s due to validation error: %s",
                 candidate,
                 error,
             )
