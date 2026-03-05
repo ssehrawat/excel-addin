@@ -58,6 +58,36 @@ export interface ChartInsert {
   seriesBy?: ChartSeriesBy;
 }
 
+export type AggregationFunction =
+  | "sum"
+  | "count"
+  | "average"
+  | "max"
+  | "min"
+  | "product"
+  | "countNumbers"
+  | "standardDeviation"
+  | "standardDeviationP"
+  | "variance"
+  | "varianceP";
+
+export interface PivotTableDataField {
+  name: string;
+  summarizeBy?: AggregationFunction;
+}
+
+export interface PivotTableInsert {
+  name: string;
+  sourceAddress: string;
+  sourceWorksheet?: string | null;
+  destinationAddress?: string;
+  destinationWorksheet?: string | null;
+  rows?: string[];
+  columns?: string[];
+  values?: PivotTableDataField[];
+  filters?: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Workbook context types (new for refactor)
 // ---------------------------------------------------------------------------
@@ -117,6 +147,7 @@ export interface ChatResponse {
   cell_updates?: CellUpdate[];
   format_updates?: FormatUpdate[];
   chart_inserts?: ChartInsert[];
+  pivot_table_inserts?: PivotTableInsert[];
   telemetry?: Telemetry | null;
 }
 
@@ -183,6 +214,7 @@ export type ChatStreamEvent =
   | { type: "cell_updates"; payload: CellUpdate[] }
   | { type: "format_updates"; payload: FormatUpdate[] }
   | { type: "chart_inserts"; payload: ChartInsert[] }
+  | { type: "pivot_table_inserts"; payload: PivotTableInsert[] }
   | { type: "telemetry"; payload: Telemetry | null }
   | { type: "tool_call_required"; payload: WorkbookToolCall[] }
   | { type: "status"; payload: string }

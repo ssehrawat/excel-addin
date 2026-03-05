@@ -70,6 +70,51 @@ class ChartSeriesBy(str, Enum):
     COLUMNS = "columns"
 
 
+class AggregationFunction(str, Enum):
+    SUM = "sum"
+    COUNT = "count"
+    AVERAGE = "average"
+    MAX = "max"
+    MIN = "min"
+    PRODUCT = "product"
+    COUNT_NUMBERS = "countNumbers"
+    STANDARD_DEVIATION = "standardDeviation"
+    STANDARD_DEVIATION_P = "standardDeviationP"
+    VARIANCE = "variance"
+    VARIANCE_P = "varianceP"
+
+
+class PivotTableDataField(BaseModel):
+    """A data (values) field with aggregation for a pivot table."""
+
+    name: str
+    summarize_by: AggregationFunction = Field(
+        default=AggregationFunction.SUM, alias="summarizeBy"
+    )
+
+    class Config:
+        populate_by_name = True
+
+
+class PivotTableInsert(BaseModel):
+    """Schema for creating a pivot table via Office.js."""
+
+    name: str
+    source_address: str = Field(..., alias="sourceAddress")
+    source_worksheet: Optional[str] = Field(default=None, alias="sourceWorksheet")
+    destination_address: Optional[str] = Field(default=None, alias="destinationAddress")
+    destination_worksheet: Optional[str] = Field(
+        default=None, alias="destinationWorksheet"
+    )
+    rows: List[str] = Field(default_factory=list)
+    columns: List[str] = Field(default_factory=list)
+    values: List[PivotTableDataField] = Field(default_factory=list)
+    filters: List[str] = Field(default_factory=list)
+
+    class Config:
+        populate_by_name = True
+
+
 class ChartInsert(BaseModel):
     chart_type: str = Field(..., alias="chartType")
     source_address: str = Field(..., alias="sourceAddress")
@@ -190,6 +235,9 @@ class ChatResponse(BaseModel):
     )
     chart_inserts: List[ChartInsert] = Field(
         default_factory=list, alias="chart_inserts"
+    )
+    pivot_table_inserts: List[PivotTableInsert] = Field(
+        default_factory=list, alias="pivot_table_inserts"
     )
     telemetry: Optional[Telemetry] = None
 

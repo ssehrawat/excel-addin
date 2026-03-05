@@ -1,0 +1,22 @@
+{
+  "answer": "I've created a pivot table summarizing Revenue by Region and Quarter.",
+  "cell_updates": [],
+  "format_updates": [],
+  "chart_inserts": [],
+  "pivot_table_inserts": [
+    {
+      "name": "SalesPivot",
+      "sourceAddress": "A1:D100",
+      "sourceWorksheet": "Sales",
+      "destinationAddress": "F1",
+      "destinationWorksheet": "Summary",
+      "rows": ["Region"],
+      "columns": ["Quarter"],
+      "values": [
+        {"name": "Revenue", "summarizeBy": "sum"},
+        {"name": "Quantity", "summarizeBy": "average"}
+      ],
+      "filters": ["Category"]
+    }
+  ]
+}
