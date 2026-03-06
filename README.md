@@ -4,10 +4,10 @@ An Excel Office Add-in (taskpane) that lets users chat with their workbook data.
 
 ### Features
 
-- **Streaming chat** — responses appear as thought/step/final bubbles in real time
+- **Streaming chat** — thinking steps show progress with live spinners, then the final response appears
 - **Cell updates** — LLM can write values into cells (replace or append mode)
-- **Format updates** — fill color, font color, bold, italic applied to specified ranges
-- **Chart inserts** — bar, line, pie, scatter, etc. with axis titles
+- **Format updates** — fill color, font color, bold, italic, number format, and borders applied to specified ranges
+- **Chart inserts** — bar, column, line, scatter, bubble with axis titles
 - **Pivot table inserts** — rows, columns, values, filters inferred from sheet context
 - **MCP tool servers** — connect external data sources (databases, APIs) that the LLM can query server-side
 - **Excel read tools** — LLM can request additional workbook data mid-conversation (up to 3 tool-call rounds per message)
@@ -27,7 +27,7 @@ cd backend
 python -m venv .venv
 .venv/Scripts/activate                     # Windows
 pip install -r requirements.txt
-cp .env.example .env                       # fill in API keys as needed
+# create backend/.env with your API keys (see Configuration section below)
 
 # Run with SSL (required for Excel sideloading)
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 \
@@ -85,7 +85,7 @@ Other useful scripts:
 - Select any cells you want to include as context before sending a prompt.
 - If your prompt contains explicit range references (e.g. `Sheet1!B2:C5` or `A1:B3`), those ranges are read instead of the current selection.
 - The first 50 rows of the active sheet are sent as a CSV preview on every message, so the LLM has immediate context.
-- Responses stream into the panel — thought/step/final bubbles appear as they are produced.
+- Responses stream into the panel — thinking steps update with spinners as the LLM works, then the final answer appears.
 - Cell updates, formatting, charts, and pivot tables are applied to the workbook automatically.
 - Use the settings gear to switch providers or manage MCP servers.
 - Click **New Chat** to reset the conversation.
