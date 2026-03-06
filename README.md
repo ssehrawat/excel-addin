@@ -13,6 +13,23 @@ An Excel Office Add-in (taskpane) that lets users chat with their workbook data.
 - **Excel read tools** — LLM can request additional workbook data mid-conversation (up to 3 tool-call rounds per message)
 - **Multi-provider** — switch between mock, OpenAI, and Anthropic at runtime
 
+### Quick Start
+
+The fastest way to get everything running:
+
+```bash
+# 1. Generate SSL certs (first time only)
+cd frontend && npm install && npm run dev:cert && cd ..
+
+# 2. Start both backend and frontend
+bash start.sh
+```
+
+The startup script checks prerequisites, creates a Python venv, installs dependencies,
+copies `.env.example` to `.env` if needed, and boots both services with HTTPS.
+
+Use `bash start.sh --install` to force-reinstall all dependencies.
+
 ### Prerequisites
 
 - Excel desktop with sideloading enabled (Microsoft 365 recommended)
@@ -27,7 +44,7 @@ cd backend
 python -m venv .venv
 .venv/Scripts/activate                     # Windows
 pip install -r requirements.txt
-# create backend/.env with your API keys (see Configuration section below)
+cp .env.example .env          # then edit .env to add your API keys
 
 # Run with SSL (required for Excel sideloading)
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 \
@@ -102,6 +119,23 @@ All backend settings use the `COPILOT_` prefix (via pydantic-settings). Key vari
 | `COPILOT_OPENAI_MODEL` | Default: `gpt-4o-mini` |
 | `COPILOT_MOCK_PROVIDER_ENABLED` | `true`/`false` — enable mock provider |
 | `COPILOT_REQUEST_TIMEOUT_SECONDS` | Overall request timeout |
+
+### Docker (optional)
+
+Run both services in containers using Docker Compose:
+
+```bash
+cp backend/.env.example backend/.env   # then edit with your API keys
+docker-compose up --build
+```
+
+Services will be available at:
+- Backend: https://localhost:8000
+- Frontend: https://localhost:3000
+
+Both services use self-signed certificates. Your browser will show a security warning on first access — accept it to proceed.
+
+To stop: `docker-compose down`. To also remove persisted MCP server data: `docker-compose down -v`.
 
 ### Packaging (optional)
 

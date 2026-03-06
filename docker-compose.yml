@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    volumes:
+      - mcp-data:/app/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,ssl; urllib.request.urlopen('https://localhost:8000/health', context=ssl._create_unverified_context())"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_BASE_URL=https://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mcp-data:
