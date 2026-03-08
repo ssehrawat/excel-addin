@@ -164,9 +164,7 @@ export function ChatPanel({
   return (
     <div className={styles.root}>
       <div className={styles.header}>
-        <div className={styles.headerBrand}>
-          <div className={styles.headerTitle}>Workbook Copilot</div>
-        </div>
+        <div className={styles.headerBrand} />
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <Tooltip content="New chat" relationship="label">
             <Button
