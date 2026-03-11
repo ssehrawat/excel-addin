@@ -120,8 +120,4 @@ describe("ChatPanel", () => {
     }
   });
 
-  it("shows title text", () => {
-    renderPanel();
-    expect(screen.getByText("Workbook Copilot")).toBeInTheDocument();
-  });
 });

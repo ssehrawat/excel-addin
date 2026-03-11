@@ -192,10 +192,53 @@ export async function getUserContext(): Promise<UserContext> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sheet preview cache — invalidated by worksheet change / sheet switch events
+// ---------------------------------------------------------------------------
+
+let previewCache: { csv: string } | null = null;
+let previewDirty = true;
+
+const markPreviewDirty = async () => {
+  previewDirty = true;
+  previewCache = null;
+};
+
+/** Reset cache state. Exported for testing only. */
+export function resetPreviewCache(): void {
+  previewDirty = true;
+  previewCache = null;
+}
+
+/**
+ * Register event listeners that invalidate the sheet preview cache when
+ * the active sheet's data changes or the user switches sheets.
+ * Call once on add-in init (alongside getWorkbookMetadata).
+ */
+export async function initPreviewCache(): Promise<void> {
+  if (!Office.context || Office.context.host !== Office.HostType.Excel) {
+    return;
+  }
+  try {
+    await Excel.run(async (context) => {
+      const sheet = context.workbook.worksheets.getActiveWorksheet();
+      sheet.onChanged.add(markPreviewDirty);
+      context.workbook.worksheets.onActivated.add(markPreviewDirty);
+      await context.sync();
+    });
+  } catch (error) {
+    console.warn("initPreviewCache: could not register listeners", error);
+  }
+}
+
 /**
  * Read the first {@link maxRows} rows of the active sheet as a CSV string.
  * Used as a lightweight "sheet preview" attached to every chat request so the
  * LLM has structural awareness without a full tool call.
+ *
+ * Returns a cached result when the sheet data has not changed since the last
+ * read. The cache is invalidated by event listeners registered via
+ * {@link initPreviewCache}.
  *
  * @param maxRows - Maximum number of rows to read (default 50).
  * @returns CSV string, or null when the sheet is empty or on error.
@@ -206,30 +249,43 @@ export async function getLightweightSheetPreview(
   if (!Office.context || Office.context.host !== Office.HostType.Excel) {
     return null;
   }
+  if (!previewDirty && previewCache) {
+    return previewCache.csv;
+  }
   try {
     return await Excel.run(async (context) => {
       const sheet = context.workbook.worksheets.getActiveWorksheet();
       const usedRange = sheet.getUsedRangeOrNullObject();
-      usedRange.load(["isNullObject", "rowCount", "columnCount", "values"]);
+      usedRange.load(["isNullObject", "rowCount", "columnCount"]);
       await context.sync();
 
       if (usedRange.isNullObject || usedRange.rowCount === 0) {
+        previewCache = null;
+        previewDirty = false;
         return null;
       }
 
-      const allValues = usedRange.values as (string | number | boolean | null)[][];
-      const rows = allValues.slice(0, maxRows);
+      const rowsToRead = Math.min(maxRows, usedRange.rowCount);
+      const previewRange = sheet.getRangeByIndexes(
+        0, 0, rowsToRead, usedRange.columnCount
+      );
+      previewRange.load("values");
+      await context.sync();
+
+      const rows = previewRange.values as (string | number | boolean | null)[][];
       const csv = rows
         .map((row) =>
           row
             .map((cell) => {
               const s = cell == null ? "" : String(cell);
-              // Quote cells that contain commas or newlines
               return s.includes(",") || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
             })
             .join(",")
         )
         .join("\n");
+
+      previewCache = { csv };
+      previewDirty = false;
       return csv;
     });
   } catch (error) {
@@ -262,26 +318,25 @@ export async function getXlCellRanges(
         ? context.workbook.worksheets.getItem(sheetName)
         : context.workbook.worksheets.getActiveWorksheet();
 
-    const results: unknown[] = [];
-    for (const addr of ranges) {
+    const rangeProxies = ranges.map((addr) => {
       const range = ws.getRange(addr);
       range.load(["address", "values", "formulas", "numberFormat"]);
       range.format.fill.load("color");
       range.format.font.load(["color", "bold", "italic"]);
-      await context.sync();
+      return range;
+    });
+    await context.sync();
 
-      results.push({
-        address: range.address,
-        values: range.values,
-        formulas: range.formulas,
-        numberFormat: range.numberFormat,
-        fillColor: range.format.fill.color,
-        fontColor: range.format.font.color,
-        bold: range.format.font.bold,
-        italic: range.format.font.italic
-      });
-    }
-    return results;
+    return rangeProxies.map((range) => ({
+      address: range.address,
+      values: range.values,
+      formulas: range.formulas,
+      numberFormat: range.numberFormat,
+      fillColor: range.format.fill.color,
+      fontColor: range.format.font.color,
+      bold: range.format.font.bold,
+      italic: range.format.font.italic
+    }));
   });
 }
 
@@ -370,7 +425,7 @@ export async function xlSearchData(
       ws.load("name");
       try {
         const foundRanges = ws.findAllOrNullObject(query, searchOptions);
-        foundRanges.load(["isNullObject", "areas"]);
+        foundRanges.load("isNullObject");
         await context.sync();
         if (!foundRanges.isNullObject) {
           foundRanges.areas.load("items");
@@ -424,47 +479,38 @@ export async function getAllXlObjects(
     const tables: unknown[] = [];
     const pivotTables: unknown[] = [];
 
-    for (const ws of sheetsToScan) {
+    // Phase 1: load all collections for all sheets in one sync
+    const sheetCollections = sheetsToScan.map((ws) => {
       ws.load("name");
+      const c = (!objectType || objectType === "chart") ? ws.charts : null;
+      const t = (!objectType || objectType === "table") ? ws.tables : null;
+      const p = (!objectType || objectType === "pivot") ? ws.pivotTables : null;
+      c?.load("items");
+      t?.load("items");
+      p?.load("items");
+      return { ws, c, t, p };
+    });
+    await context.sync();
 
-      if (!objectType || objectType === "chart") {
-        const wsCharts = ws.charts;
-        wsCharts.load("items");
-        await context.sync();
-        wsCharts.items.forEach((c) => {
-          c.load(["name", "chartType"]);
-        });
-        await context.sync();
-        wsCharts.items.forEach((c) => {
-          charts.push({ name: c.name, type: c.chartType, sheet: ws.name });
-        });
-      }
+    // Phase 2: load item properties for all items in one sync
+    for (const { c, t, p } of sheetCollections) {
+      c?.items.forEach((ch) => ch.load(["name", "chartType"]));
+      t?.items.forEach((tb) => tb.load(["name", "showTotals"]));
+      p?.items.forEach((pv) => pv.load("name"));
+    }
+    await context.sync();
 
-      if (!objectType || objectType === "table") {
-        const wsTables = ws.tables;
-        wsTables.load("items");
-        await context.sync();
-        wsTables.items.forEach((t) => {
-          t.load(["name", "showTotals"]);
-        });
-        await context.sync();
-        wsTables.items.forEach((t) => {
-          tables.push({ name: t.name, sheet: ws.name });
-        });
-      }
-
-      if (!objectType || objectType === "pivot") {
-        const pivots = ws.pivotTables;
-        pivots.load("items");
-        await context.sync();
-        pivots.items.forEach((p) => {
-          p.load("name");
-        });
-        await context.sync();
-        pivots.items.forEach((p) => {
-          pivotTables.push({ name: p.name, sheet: ws.name });
-        });
-      }
+    // Extract results from populated proxies
+    for (const { ws, c, t, p } of sheetCollections) {
+      c?.items.forEach((ch) => {
+        charts.push({ name: ch.name, type: ch.chartType, sheet: ws.name });
+      });
+      t?.items.forEach((tb) => {
+        tables.push({ name: tb.name, sheet: ws.name });
+      });
+      p?.items.forEach((pv) => {
+        pivotTables.push({ name: pv.name, sheet: ws.name });
+      });
     }
 
     return { charts, tables, pivotTables };
@@ -833,10 +879,18 @@ export async function insertPivotTables(
             : context.workbook.worksheets.getActiveWorksheet();
         const sourceRange = sourceWorksheet.getRange(rangeAddress);
 
-        // Resolve destination sheet — default to source sheet, create if needed
-        const destSheetName = normalizeSheetName(
-          insert.destinationWorksheet ?? undefined
-        );
+        // Resolve destination address parts (strip sheet prefix like "Sheet2!E1")
+        const {
+          sheetName: destInferredSheet,
+          rangeAddress: destRangeAddress,
+        } = insert.destinationAddress
+          ? splitReference(insert.destinationAddress)
+          : { sheetName: undefined, rangeAddress: undefined };
+
+        // Resolve destination sheet — prefer explicit, then inferred from address, then source sheet
+        const destSheetName =
+          normalizeSheetName(insert.destinationWorksheet ?? undefined) ??
+          destInferredSheet;
         let destWorksheet: Excel.Worksheet;
         if (destSheetName != null) {
           // User/LLM requested a specific sheet — create it if missing
@@ -852,8 +906,8 @@ export async function insertPivotTables(
 
         // Resolve destination cell — if not specified, find empty area to the right of data
         let destRange: Excel.Range;
-        if (insert.destinationAddress) {
-          destRange = destWorksheet.getRange(insert.destinationAddress);
+        if (destRangeAddress) {
+          destRange = destWorksheet.getRange(destRangeAddress);
         } else {
           // Place 2 columns to the right of used data to avoid overlap
           const usedRange = destWorksheet.getUsedRangeOrNullObject();
@@ -867,66 +921,49 @@ export async function insertPivotTables(
           }
         }
 
-        // Create the pivot table
+        // Create the pivot table and sync to materialize it before accessing hierarchies
         const pivotTable = destWorksheet.pivotTables.add(
           insert.name,
           sourceRange,
           destRange
         );
+        await context.sync();
 
         // Add row hierarchies
         for (const rowField of insert.rows ?? []) {
-          try {
-            pivotTable.rowHierarchies.add(
-              pivotTable.hierarchies.getItem(rowField)
-            );
-          } catch (err) {
-            console.warn(`Could not add row hierarchy "${rowField}":`, err);
-          }
+          pivotTable.rowHierarchies.add(
+            pivotTable.hierarchies.getItem(rowField)
+          );
         }
+        if (insert.rows?.length) await context.sync();
 
         // Add column hierarchies
         for (const colField of insert.columns ?? []) {
-          try {
-            pivotTable.columnHierarchies.add(
-              pivotTable.hierarchies.getItem(colField)
-            );
-          } catch (err) {
-            console.warn(`Could not add column hierarchy "${colField}":`, err);
-          }
+          pivotTable.columnHierarchies.add(
+            pivotTable.hierarchies.getItem(colField)
+          );
         }
+        if (insert.columns?.length) await context.sync();
 
         // Add data (values) hierarchies
         for (const dataField of insert.values ?? []) {
-          try {
-            const dataHierarchy = pivotTable.dataHierarchies.add(
-              pivotTable.hierarchies.getItem(dataField.name)
-            );
-            const aggKey = dataField.summarizeBy ?? "sum";
-            if (aggKey in AGGREGATION_FUNCTION_MAP) {
-              dataHierarchy.summarizeBy = AGGREGATION_FUNCTION_MAP[aggKey];
-            }
-          } catch (err) {
-            console.warn(
-              `Could not add data hierarchy "${dataField.name}":`,
-              err
-            );
+          const dataHierarchy = pivotTable.dataHierarchies.add(
+            pivotTable.hierarchies.getItem(dataField.name)
+          );
+          const aggKey = dataField.summarizeBy ?? "sum";
+          if (aggKey in AGGREGATION_FUNCTION_MAP) {
+            dataHierarchy.summarizeBy = AGGREGATION_FUNCTION_MAP[aggKey];
           }
         }
+        if (insert.values?.length) await context.sync();
 
         // Add filter hierarchies
         for (const filterField of insert.filters ?? []) {
-          try {
-            pivotTable.filterHierarchies.add(
-              pivotTable.hierarchies.getItem(filterField)
-            );
-          } catch (err) {
-            console.warn(
-              `Could not add filter hierarchy "${filterField}":`,
-              err
-            );
-          }
+          pivotTable.filterHierarchies.add(
+            pivotTable.hierarchies.getItem(filterField)
+          );
         }
+        if (insert.filters?.length) await context.sync();
       } catch (error) {
         console.error("Unable to insert pivot table", insert, error);
       }

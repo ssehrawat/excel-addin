@@ -36,6 +36,7 @@ import {
   getWorkbookMetadata,
   getUserContext,
   getLightweightSheetPreview,
+  initPreviewCache,
   executeWorkbookTool
 } from "./excel";
 
@@ -130,7 +131,7 @@ export function App() {
     messagesRef.current = messages;
   }, [messages]);
 
-  // Collect workbook metadata once on mount (after Office is ready)
+  // Collect workbook metadata and register preview cache listeners on mount
   useEffect(() => {
     const initWorkbook = async () => {
       try {
@@ -139,6 +140,11 @@ export function App() {
         console.debug("Workbook metadata loaded", meta);
       } catch (err) {
         console.warn("Failed to load workbook metadata:", err);
+      }
+      try {
+        await initPreviewCache();
+      } catch (err) {
+        console.warn("Failed to init preview cache:", err);
       }
     };
     void initWorkbook();

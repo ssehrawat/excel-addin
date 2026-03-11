@@ -220,8 +220,12 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "to define the pivot table structure. Each entry in `values` must have `name` (column "
         "header) and optionally `summarizeBy` (sum, count, average, max, min, product, "
         "countNumbers, standardDeviation, standardDeviationP, variance, varianceP). "
+        "Optional: `destinationWorksheet` (sheet name for the pivot output) and "
+        "`destinationAddress` (cell where the pivot starts, e.g. \"E1\" or \"Sheet2!E1\"). "
+        "If omitted, the pivot is placed automatically to the right of used data on the source sheet. "
         "Example:\n"
         '{"pivot_table_inserts": [{"name": "SalesPivot", "sourceAddress": "A1:D100", '
+        '"destinationWorksheet": "PivotSheet", "destinationAddress": "A1", '
         '"rows": ["Region"], "columns": ["Quarter"], '
         '"values": [{"name": "Revenue", "summarizeBy": "sum"}], '
         '"filters": ["Category"]}]}\n'

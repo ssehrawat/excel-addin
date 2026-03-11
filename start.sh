@@ -106,6 +106,12 @@ fi
 info "SSL certs found"
 
 # ---------------------------------------------------------------------------
+# Save original PATH so the frontend subshell can still find npm/node
+# (venv activation rewrites PATH and may hide Node tooling on Windows)
+# ---------------------------------------------------------------------------
+PRE_VENV_PATH="$PATH"
+
+# ---------------------------------------------------------------------------
 # Backend: venv + dependencies
 # ---------------------------------------------------------------------------
 VENV_DIR="$BACKEND_DIR/.venv"
@@ -150,7 +156,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ ! -d "$FRONTEND_DIR/node_modules" ]] || [[ "$FORCE_INSTALL" == true ]]; then
   info "Installing Node dependencies..."
-  (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
+  (cd "$FRONTEND_DIR" && PATH="$PRE_VENV_PATH" npm install --no-audit --no-fund)
   info "Node dependencies installed"
 fi
 
@@ -177,7 +183,7 @@ info "Starting backend on https://localhost:8000 ..."
 BACKEND_PID=$!
 
 info "Starting frontend on https://localhost:3000 ..."
-(cd "$FRONTEND_DIR" && npm start) &
+(cd "$FRONTEND_DIR" && PATH="$PRE_VENV_PATH" npm start) &
 FRONTEND_PID=$!
 
 echo ""
