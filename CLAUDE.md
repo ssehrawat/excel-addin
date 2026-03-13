@@ -72,8 +72,9 @@ Settings are loaded once and cached via `@lru_cache` in `config.py`. To reload s
 ```
 User types prompt → App.tsx handleSend()
   ├─ getWorkbookMetadata()          (once at init, re-used)       [excel.ts]
+  ├─ initPreviewCache()             (once at init, registers event listeners) [excel.ts]
   ├─ getUserContext()                (fresh each send)             [excel.ts]
-  ├─ getLightweightSheetPreview(50)  (first 50 rows CSV)           [excel.ts]
+  ├─ getLightweightSheetPreview(50)  (event-cached CSV preview)    [excel.ts]
   ├─ getSelectionsFromPrompt() / getCurrentSelection()             [excel.ts]
   └─ POST /chat { prompt, provider, messages, selection,
                   workbookMetadata, userContext, activeSheetPreview }
@@ -90,12 +91,13 @@ User types prompt → App.tsx handleSend()
                → (max 3 tool-call rounds on frontend side)
            → If LLM returns answer:
                stream message_start / message_delta / message_done
-               emit cell_updates, format_updates, chart_inserts
+               emit cell_updates, format_updates, chart_inserts, pivot_table_inserts
                emit telemetry, done
        → handleStreamEvent()                                      [App.tsx]
-           → applyCellUpdates()    [excel.ts]
-           → applyFormatUpdates()  [excel.ts]
-           → insertCharts()        [excel.ts]
+           → applyCellUpdates()      [excel.ts]
+           → applyFormatUpdates()    [excel.ts]
+           → insertCharts()          [excel.ts]
+           → insertPivotTables()     [excel.ts]
 ```
 
 ### Backend Modules
@@ -109,8 +111,8 @@ User types prompt → App.tsx handleSend()
 
 ### Frontend Modules
 
-- **`App.tsx`** — Root component. State: messages, workbookMetadata (init once), thinkingSteps, provider selection, MCP server list, busy flags. `handleSend()` pre-reads userContext + activeSheetPreview on every send. `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
-- **`excel.ts`** — All Office.js interactions. `getWorkbookMetadata()` collects filename + per-sheet dims. `getUserContext()` returns active sheet name + selected range. `getLightweightSheetPreview(maxRows)` returns CSV of first N rows. Five on-demand read tools: `getXlCellRanges`, `getXlRangeAsCsv`, `xlSearchData`, `getAllXlObjects`, `executeXlOfficeJs`. `executeWorkbookTool(call)` dispatches to the right function. `getSelectionsFromPrompt()` extracts explicit range refs before falling back to `getCurrentSelection()`. `applyCellUpdates()` supports `replace` and `append` modes.
+- **`App.tsx`** — Root component. State: messages, workbookMetadata (init once), thinkingSteps, provider selection, MCP server list, busy flags. Init calls `getWorkbookMetadata()` and `initPreviewCache()`. `handleSend()` pre-reads userContext + activeSheetPreview on every send. `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
+- **`excel.ts`** — All Office.js interactions. `getWorkbookMetadata()` collects filename + per-sheet dims. `getUserContext()` returns active sheet name + selected range. `initPreviewCache()` registers `onChanged`/`onActivated` listeners for cache invalidation. `getLightweightSheetPreview(maxRows)` returns event-cached CSV of first N rows (only re-reads when data changes or sheet switches). Five on-demand read tools: `getXlCellRanges` (batched single sync), `getXlRangeAsCsv`, `xlSearchData`, `getAllXlObjects` (two-phase sync), `executeXlOfficeJs`. `executeWorkbookTool(call)` dispatches to the right function. `getSelectionsFromPrompt()` extracts explicit range refs before falling back to `getCurrentSelection()`. `applyCellUpdates()` supports `replace` and `append` modes. `insertPivotTables()` supports explicit `destinationWorksheet` and `destinationAddress` (including `"Sheet2!E1"` format).
 - **`config.ts`** — `API_BASE_URL` and `DEFAULT_PROVIDER` are injectable via webpack `process.env`.
 - **`types.ts`** — TypeScript mirror of backend schemas. Includes `WorkbookMetadata`, `UserContext`, `WorkbookToolCall/Result`. `ChatStreamEvent` discriminated union includes `tool_call_required`, `status`, and `suggestion` event types.
 
@@ -120,7 +122,7 @@ User types prompt → App.tsx handleSend()
 
 ### LLM Response Format
 All providers share `WORKBOOK_COPILOT_SYSTEM_PROMPT` (in `providers.py`). The LLM returns strict JSON in one of two formats:
-- **Option A** (direct answer): `{"answer": "...", "cell_updates": [...], "format_updates": [...], "chart_inserts": [...], "suggestion": "..."}`
+- **Option A** (direct answer): `{"answer": "...", "cell_updates": [...], "format_updates": [...], "chart_inserts": [...], "pivot_table_inserts": [...], "suggestion": "..."}`
 - **Option B** (needs data): `{"needs_data": true, "tool_call": {"tool": "get_xl_range_as_csv", "args": {...}}}`
 
 The system prompt is the contract — changes there affect all parsing in `assemble_messages_from_payload()` and `build_*` helpers. Both OpenAI and Anthropic providers attempt JSON mode and fall back to lax parsing on `response_format` errors.
@@ -129,7 +131,7 @@ The system prompt is the contract — changes there affect all parsing in `assem
 On every message send, the frontend collects fresh context in parallel before POSTing:
 1. `workbookMetadata` — collected once at add-in init, re-used (filename + all sheets with dims)
 2. `userContext` — active sheet name + selected range address (fresh each send)
-3. `activeSheetPreview` — first 50 rows of active sheet as CSV (fresh each send)
+3. `activeSheetPreview` — first 50 rows of active sheet as CSV (event-cached; only re-reads when sheet data changes or user switches sheets, via listeners registered by `initPreviewCache()`)
 4. `selection` — explicit range refs from prompt text, or current selection
 
 ### Excel Read Tool Round-Trip

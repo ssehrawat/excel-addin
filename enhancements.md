@@ -19,3 +19,7 @@
         - GITSHA: 'd4b7273f68dc736d6dca5a57c08345deddcbfe83' mcp-servers (LLM router)
         - GITSHA: '4dcfd293a838a08a01274a87efaee39e75939bbf' mcp-servers (MCP transport auto-detect)
         - GITSHA: 'd9d48f1a216a4367c28be67c279d7906706580b9' mcp-servers (Fix: MongoDB data truncation - increased limit from 600 to 50K chars, added debug logging, enhanced JSON extraction for tool results)
+
+## Enhancement 5:
+    - [x] Optimize Office.js read performance: event-cached sheet preview, batched sync for getXlCellRanges, two-phase sync for getAllXlObjects, improved pivot table destination address parsing, prestart port cleanup, SSL cert support in webpack dev server, fix start.sh PATH for venv compatibility.
+        - GITSHA: '9a87bbd' efficient-sheet-reading
