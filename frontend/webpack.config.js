@@ -17,7 +17,8 @@ const hasDevCerts =
 
 module.exports = {
   entry: {
-    taskpane: "./src/taskpane.tsx"
+    taskpane: "./src/taskpane.tsx",
+    functions: "./src/functions/functions.ts"
   },
   output: {
     path: path.resolve(__dirname, "dist"),
@@ -47,8 +48,17 @@ module.exports = {
       chunks: ["taskpane"],
       minify: false
     }),
+    new HtmlWebpackPlugin({
+      filename: "functions.html",
+      template: "./src/functions.html",
+      chunks: ["functions"],
+      minify: false
+    }),
     new CopyPlugin({
-      patterns: [{ from: "src/assets", to: "assets", noErrorOnMissing: true }]
+      patterns: [
+        { from: "src/assets", to: "assets", noErrorOnMissing: true },
+        { from: "src/functions/metadata.json", to: "functions.json" }
+      ]
     }),
     new MiniCssExtractPlugin(),
     new webpack.DefinePlugin({
@@ -74,6 +84,17 @@ module.exports = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
       "Access-Control-Allow-Headers": "X-Requested-With, content-type, Authorization"
+    },
+    client: {
+      overlay: {
+        errors: true,
+        warnings: false,
+        runtimeErrors: (error) => {
+          // Suppress cross-origin "Script error." from office.js CDN
+          if (error?.message === "Script error.") return false;
+          return true;
+        }
+      }
     }
   },
   devtool: isDevelopment ? "inline-source-map" : false,

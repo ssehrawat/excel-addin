@@ -35,31 +35,51 @@
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
+        <Runtimes>
+          <Runtime resid="Taskpane.Url" lifetime="long" />
+        </Runtimes>
+        <AllFormFactors>
+          <ExtensionPoint xsi:type="CustomFunctions">
+            <Script>
+              <SourceLocation resid="Taskpane.Url" />
+            </Script>
+            <Page>
+              <SourceLocation resid="Taskpane.Url" />
+            </Page>
+            <Metadata>
+              <SourceLocation resid="Functions.Metadata.Url" />
+            </Metadata>
+            <Namespace resid="Functions.Namespace" />
+          </ExtensionPoint>
+        </AllFormFactors>
         <DesktopFormFactor>
-          <ExtensionPoint xsi:type="Taskpane">
-            <CommandSurface>
-              <CustomTab id="WorkbookCopilotTab">
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <CustomTab id="WorkbookCopilotTab">
+              <Label resid="Tab.Label" />
+              <Group id="WorkbookCopilotGroup">
                 <Label resid="Tab.Label" />
-                <Group id="WorkbookCopilotGroup">
-                  <Label resid="Tab.Label" />
-                  <Control xsi:type="Button" id="WorkbookCopilotButton">
-                    <Label resid="Button.Label" />
-                    <Supertip>
-                      <Title resid="Button.Label" />
-                      <Description resid="Button.Tooltip" />
-                    </Supertip>
-                    <Icon>
-                      <bt:Image size="16" resid="Icon.16" />
-                      <bt:Image size="32" resid="Icon.32" />
-                      <bt:Image size="80" resid="Icon.80" />
-                    </Icon>
-                    <Action xsi:type="ShowTaskpane">
-                      <SourceLocation resid="Taskpane.Url" />
-                    </Action>
-                  </Control>
-                </Group>
-              </CustomTab>
-            </CommandSurface>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16" />
+                  <bt:Image size="32" resid="Icon.32" />
+                  <bt:Image size="80" resid="Icon.80" />
+                </Icon>
+                <Control xsi:type="Button" id="WorkbookCopilotButton">
+                  <Label resid="Button.Label" />
+                  <Supertip>
+                    <Title resid="Button.Label" />
+                    <Description resid="Button.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16" />
+                    <bt:Image size="32" resid="Icon.32" />
+                    <bt:Image size="80" resid="Icon.80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </CustomTab>
           </ExtensionPoint>
         </DesktopFormFactor>
       </Host>
@@ -72,10 +92,12 @@
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html" />
+        <bt:Url id="Functions.Metadata.Url" DefaultValue="https://localhost:3000/functions.json" />
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tab.Label" DefaultValue="MyExcelCompanion" />
         <bt:String id="Button.Label" DefaultValue="MyExcelCompanion" />
+        <bt:String id="Functions.Namespace" DefaultValue="AI" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="Button.Tooltip" DefaultValue="Open the MyExcelCompanion task pane." />

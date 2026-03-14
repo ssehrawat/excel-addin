@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { setSharedProvider, setMutationHandler } from "./sharedState";
 import {
   API_BASE_URL,
   DEFAULT_PROVIDER,
@@ -112,7 +113,7 @@ interface StreamRoundResult {
 
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [provider, setProvider] = useState<string>(DEFAULT_PROVIDER);
+  const [provider, setProviderState] = useState<string>(DEFAULT_PROVIDER);
   const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
   const [workbookMetadata, setWorkbookMetadata] =
     useState<WorkbookMetadata | null>(null);
@@ -126,6 +127,12 @@ export function App() {
     { id: string; text: string; status: "active" | "done" }[]
   >([]);
 
+  /** Update both React state and shared window global for custom functions. */
+  const setProvider = useCallback((next: string) => {
+    setProviderState(next);
+    setSharedProvider(next);
+  }, []);
+
   const messagesRef = useRef(messages);
   useEffect(() => {
     messagesRef.current = messages;
@@ -133,6 +140,17 @@ export function App() {
 
   // Collect workbook metadata and register preview cache listeners on mount
   useEffect(() => {
+    setSharedProvider(DEFAULT_PROVIDER);
+
+    // Bridge mutation-applying functions so =ASKAI() custom functions can
+    // dispatch pivot tables, charts, cell/format updates via the taskpane.
+    setMutationHandler(async (mutations) => {
+      if (mutations.cellUpdates?.length)       await applyCellUpdates(mutations.cellUpdates);
+      if (mutations.formatUpdates?.length)     await applyFormatUpdates(mutations.formatUpdates);
+      if (mutations.chartInserts?.length)      await insertCharts(mutations.chartInserts);
+      if (mutations.pivotTableInserts?.length) await insertPivotTables(mutations.pivotTableInserts);
+    });
+
     const initWorkbook = async () => {
       try {
         const meta = await getWorkbookMetadata();

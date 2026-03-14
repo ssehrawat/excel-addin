@@ -252,3 +252,31 @@ class TestPivotTableInserts:
         assert inserts[0].source_worksheet == "Sales"
         assert inserts[0].destination_address == "F1"
         assert inserts[0].destination_worksheet == "Summary"
+
+
+class TestCustomFunctionResponse:
+    """Fixture: custom_function_response.json — minimal =ASKAI single-shot response."""
+
+    @pytest.fixture
+    def payload(self):
+        return _load_fixture("custom_function_response.json")
+
+    def test_parsed_as_dict(self, payload):
+        parsed = parse_structured_response(payload)
+        assert isinstance(parsed, dict)
+
+    def test_has_answer(self, payload):
+        parsed = parse_structured_response(payload)
+        assert "answer" in parsed
+        assert len(parsed["answer"]) > 0
+
+    def test_no_tool_call(self, payload):
+        parsed = parse_structured_response(payload)
+        assert not parsed.get("needs_data")
+
+    def test_minimal_context_accepted(self, payload):
+        """Ensures the response parses without workbook_metadata, user_context, etc."""
+        parsed = parse_structured_response(payload)
+        msgs = assemble_messages_from_payload(parsed, "Summarize this data")
+        assert len(msgs) == 1
+        assert msgs[0].kind == MessageKind.FINAL

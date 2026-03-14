@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "types": ["office-js", "node"]
+    "types": ["office-js", "node", "custom-functions-runtime"]
   },
   "include": ["src"],
   "exclude": ["src/__tests__", "src/**/*.test.ts", "src/**/*.test.tsx"]

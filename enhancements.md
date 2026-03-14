@@ -23,3 +23,8 @@
 ## Enhancement 5:
     - [x] Optimize Office.js read performance: event-cached sheet preview, batched sync for getXlCellRanges, two-phase sync for getAllXlObjects, improved pivot table destination address parsing, prestart port cleanup, SSL cert support in webpack dev server, fix start.sh PATH for venv compatibility.
         - GITSHA: '9a87bbd' efficient-sheet-reading
+
+## Enhancement 6:
+    - [x] Add =MYEXCELCOMPANION.ASKAI() custom Excel function with shared runtime,
+      streaming status, variadic ranges, spill output, and result caching.
+        - GITSHA: '<sha>' excel-function

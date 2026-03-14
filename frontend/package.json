@@ -26,6 +26,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",
+    "@types/custom-functions-runtime": "^1.6.11",
     "@types/node": "^20.11.19",
     "@types/office-js": "^1.0.99",
     "@types/react": "^18.2.37",

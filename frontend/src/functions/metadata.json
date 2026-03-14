@@ -1,0 +1,34 @@
+{
+  "functions": [
+    {
+      "id": "ASKAI",
+      "name": "ASKAI",
+      "description": "Ask AI a question with optional cell data as context",
+      "parameters": [
+        {
+          "name": "query",
+          "description": "The question or instruction to send to the AI",
+          "type": "string",
+          "dimensionality": "scalar"
+        },
+        {
+          "name": "range",
+          "description": "Optional cell range(s) to include as context",
+          "type": "any",
+          "dimensionality": "matrix",
+          "optional": true,
+          "repeating": true
+        }
+      ],
+      "result": {
+        "type": "string",
+        "dimensionality": "matrix"
+      },
+      "options": {
+        "stream": true,
+        "cancelable": true,
+        "volatile": false
+      }
+    }
+  ]
+}

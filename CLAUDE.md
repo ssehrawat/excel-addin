@@ -98,6 +98,13 @@ User types prompt → App.tsx handleSend()
            → applyFormatUpdates()    [excel.ts]
            → insertCharts()          [excel.ts]
            → insertPivotTables()     [excel.ts]
+
+=MYEXCELCOMPANION.ASKAI(query, ranges...) → functions.ts askAI()
+  ├─ Check cache → if hit, return immediately
+  ├─ getSharedProvider() → read provider from window global
+  ├─ rangesToContext(ranges) → serialize cell data
+  └─ POST /chat (streaming NDJSON, single-shot, no tool calls)
+      → "Thinking..." → status steps → final answer (spill 2D)
 ```
 
 ### Backend Modules
@@ -113,6 +120,9 @@ User types prompt → App.tsx handleSend()
 
 - **`App.tsx`** — Root component. State: messages, workbookMetadata (init once), thinkingSteps, provider selection, MCP server list, busy flags. Init calls `getWorkbookMetadata()` and `initPreviewCache()`. `handleSend()` pre-reads userContext + activeSheetPreview on every send. `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
 - **`excel.ts`** — All Office.js interactions. `getWorkbookMetadata()` collects filename + per-sheet dims. `getUserContext()` returns active sheet name + selected range. `initPreviewCache()` registers `onChanged`/`onActivated` listeners for cache invalidation. `getLightweightSheetPreview(maxRows)` returns event-cached CSV of first N rows (only re-reads when data changes or sheet switches). Five on-demand read tools: `getXlCellRanges` (batched single sync), `getXlRangeAsCsv`, `xlSearchData`, `getAllXlObjects` (two-phase sync), `executeXlOfficeJs`. `executeWorkbookTool(call)` dispatches to the right function. `getSelectionsFromPrompt()` extracts explicit range refs before falling back to `getCurrentSelection()`. `applyCellUpdates()` supports `replace` and `append` modes. `insertPivotTables()` supports explicit `destinationWorksheet` and `destinationAddress` (including `"Sheet2!E1"` format).
+- **`functions/functions.ts`** — `=MYEXCELCOMPANION.ASKAI()` custom function. Streaming, cached, spill-aware. Uses `fetch` with NDJSON parsing, `parseAnswerTo2D()` for 2D output, `computeCacheKey()` for deterministic caching, `rangesToContext()` for serializing cell data.
+- **`functions/metadata.json`** — Custom function schema registered with Office runtime. Declares parameters, result shape, and streaming/cancelable options.
+- **`sharedState.ts`** — Window-global-backed provider and cache state shared between taskpane and custom function bundles. Provides `getSharedProvider()`, `setSharedProvider()`, `getAskAICache()`, `clearAskAICache()`.
 - **`config.ts`** — `API_BASE_URL` and `DEFAULT_PROVIDER` are injectable via webpack `process.env`.
 - **`types.ts`** — TypeScript mirror of backend schemas. Includes `WorkbookMetadata`, `UserContext`, `WorkbookToolCall/Result`. `ChatStreamEvent` discriminated union includes `tool_call_required`, `status`, and `suggestion` event types.
 
@@ -148,6 +158,12 @@ Chart type aliases are defined in **both** `providers.py` (`CHART_TYPE_ALIASES` 
 
 ### MCP Server State
 MCP server configs persist to `backend/app/data/mcp_servers.json` (path configurable via `COPILOT_MCP_CONFIG_PATH`). The store uses atomic write (`.tmp` file then rename) with a threading `Lock`.
+
+### Custom Function Cache Pattern
+`=ASKAI` results are cached in a `Map<string, string[][]>` on `window.__MYEXCELCOMPANION_CACHE`. The cache key is a deterministic concatenation of the query text and all range cell values. `volatile: false` in metadata means Excel only re-invokes when formula inputs change. To force a fresh query: call `clearAskAICache()` then Ctrl+Shift+F9.
+
+### Shared Runtime State
+The taskpane and custom function bundles are separate webpack chunks that share state via typed window globals (`sharedState.ts`). `setSharedProvider()` is called from `App.tsx` whenever the provider changes. `getSharedProvider()` is called from `functions.ts` on each `=ASKAI` invocation. The `=ASKAI` function collects `cell_updates`, `format_updates`, `chart_inserts`, and `pivot_table_inserts` mutations from the stream and applies them via the taskpane mutation handler bridge. For pivot/chart mutations, the formula cell shows a brief confirmation (e.g. "Pivot table created.") instead of the verbose LLM answer. Destination addresses for pivots/charts are injected from the caller address or an active-cell fallback.
 
 ---
 
