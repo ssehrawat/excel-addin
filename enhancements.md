@@ -27,4 +27,4 @@
 ## Enhancement 6:
     - [x] Add =MYEXCELCOMPANION.ASKAI() custom Excel function with shared runtime,
       streaming status, variadic ranges, spill output, and result caching.
-        - GITSHA: '<sha>' excel-function
+        - GITSHA: '8b74750' main
