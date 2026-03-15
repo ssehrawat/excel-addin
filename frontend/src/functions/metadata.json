@@ -25,9 +25,10 @@
         "dimensionality": "matrix"
       },
       "options": {
-        "stream": true,
+        "stream": false,
         "cancelable": true,
-        "volatile": false
+        "volatile": false,
+        "requiresAddress": true
       }
     }
   ]

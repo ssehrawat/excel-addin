@@ -1,9 +1,10 @@
 /**
  * =MYEXCELCOMPANION.ASKAI() custom function implementation.
  *
- * Streaming custom function that queries the same FastAPI /chat backend
- * as the taskpane chatbot. Supports variadic range arguments, result
- * caching, streaming cell status updates, and 2D spill output.
+ * Non-streaming async custom function that queries the same FastAPI /chat
+ * backend as the taskpane chatbot. Supports variadic range arguments, result
+ * caching, and 2D spill output. Participates in Excel's standard calculation
+ * engine so F2+Enter and Ctrl+Shift+F9 trigger fresh API calls.
  */
 
 import { API_BASE_URL } from "../config";
@@ -164,28 +165,23 @@ export function rangesToContext(ranges: unknown[][][]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Active request tracking (for cancellation)
-// ---------------------------------------------------------------------------
-
-const activeControllers = new Map<string, AbortController>();
-
-// ---------------------------------------------------------------------------
-// Core streaming custom function
+// Core async custom function
 // ---------------------------------------------------------------------------
 
 /**
  * =MYEXCELCOMPANION.ASKAI(query, [range1], [range2], ...)
  *
- * Streaming custom function that sends a query to the LLM backend,
- * optionally with cell data as context. Shows real-time status in the
- * cell and returns a 2D result that spills into adjacent cells.
+ * Non-streaming async custom function that sends a query to the LLM backend,
+ * optionally with cell data as context. Returns a 2D result that spills into
+ * adjacent cells. Participates in Excel's standard recalculation so F2+Enter
+ * and Ctrl+Shift+F9 trigger fresh API calls.
  *
  * @param query - The question or instruction
- * @param args - Variadic range matrices followed by the StreamingInvocation
+ * @param args - Variadic range matrices followed by the CancelableInvocation
  */
-function askAI(query: string, ...args: unknown[]): void {
-  // Office runtime appends the StreamingInvocation as the last argument
-  const invocation = args.pop() as CustomFunctions.StreamingInvocation<string[][]>;
+function askAI(query: string, ...args: unknown[]): Promise<string[][]> {
+  // Office runtime appends the CancelableInvocation as the last argument
+  const invocation = args.pop() as CustomFunctions.CancelableInvocation;
   const callerAddress = (invocation as any).address as string | undefined;
   console.debug("[ASKAI] callerAddress from invocation:", callerAddress);
 
@@ -194,31 +190,32 @@ function askAI(query: string, ...args: unknown[]): void {
 
   // Validate query
   if (!query || (typeof query === "string" && !query.trim())) {
-    invocation.setResult([["#ERROR: Query is required"]]);
-    return;
+    return Promise.resolve([["#ERROR: Query is required"]]);
   }
 
-  // Check cache
+  // Fingerprint-based cache: distinguish auto-recalc (input change) from
+  // manual recalc (F2+Enter / Ctrl+Shift+F9).
   const cache = getAskAICache();
-  const cacheKey = computeCacheKey(query, ranges);
+  const cacheKey = (callerAddress ?? "") + "||" + query;
+  const currentFingerprint = computeCacheKey("", ranges);
+
   const cached = cache.get(cacheKey);
   if (cached) {
-    invocation.setResult(cached);
-    return;
+    if (cached.rangeFingerprint !== currentFingerprint) {
+      // Input data changed → auto-recalc → return cached result, update fingerprint
+      cached.rangeFingerprint = currentFingerprint;
+      return Promise.resolve(cached.result);
+    }
+    // Same inputs → manual recalc (F2+Enter / Ctrl+Shift+F9) → evict & re-fetch
+    cache.delete(cacheKey);
   }
 
   // Set up cancellation
   const controller = new AbortController();
-  const requestId = cacheKey; // Use cache key as request ID
-  activeControllers.set(requestId, controller);
 
   invocation.onCanceled = () => {
     controller.abort();
-    activeControllers.delete(requestId);
   };
-
-  // Show initial status
-  invocation.setResult([["Thinking..."]]);
 
   // Build request payload
   const contextStr = rangesToContext(ranges);
@@ -233,8 +230,8 @@ function askAI(query: string, ...args: unknown[]): void {
     selection
   });
 
-  // Execute streaming fetch
-  void (async () => {
+  // Execute fetch and return result
+  return (async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
@@ -247,14 +244,13 @@ function askAI(query: string, ...args: unknown[]): void {
       });
 
       if (!response.ok) {
-        invocation.setResult([[`#ERROR: Backend error (${response.status})`]]);
-        activeControllers.delete(requestId);
-        return;
+        return [[`#ERROR: Backend error (${response.status})`]];
       }
 
       const contentType = response.headers.get("content-type") ?? "";
       let finalAnswer = "";
       let errorOccurred = false;
+      let errorResult: string[][] | null = null;
       const pendingMutations: PendingMutations = {};
 
       if (contentType.includes("application/x-ndjson") && response.body) {
@@ -265,23 +261,8 @@ function askAI(query: string, ...args: unknown[]): void {
 
         const processEvent = (event: ChatStreamEvent) => {
           switch (event.type) {
-            case "status":
-              invocation.setResult([[String(event.payload)]]);
-              break;
-            case "step":
-              invocation.setResult([[event.payload.text]]);
-              break;
-            case "message_start":
-              invocation.setResult([["Generating response..."]]);
-              break;
             case "message_delta": {
-              const preview = event.payload.delta;
-              finalAnswer += preview;
-              // Show truncated preview
-              const display = finalAnswer.length > 100
-                ? finalAnswer.slice(0, 100) + "..."
-                : finalAnswer;
-              invocation.setResult([[display]]);
+              finalAnswer += event.payload.delta;
               break;
             }
             case "message_done":
@@ -292,7 +273,7 @@ function askAI(query: string, ...args: unknown[]): void {
               break;
             case "error":
               errorOccurred = true;
-              invocation.setResult([[`#ERROR: ${event.payload?.message ?? "Unknown error"}`]]);
+              errorResult = [[`#ERROR: ${event.payload?.message ?? "Unknown error"}`]];
               break;
             case "cell_updates":
               if (event.payload?.length)
@@ -378,15 +359,15 @@ function askAI(query: string, ...args: unknown[]): void {
         finalAnswer = parts.join("; ") + ".";
       }
 
-      // Parse and cache final result (skip if error already shown)
-      if (!errorOccurred) {
-        if (finalAnswer) {
-          const result = parseAnswerTo2D(finalAnswer);
-          cache.set(cacheKey, result);
-          invocation.setResult(result);
-        } else {
-          invocation.setResult([[""]]);
-        }
+      // Determine final result (skip if error already captured)
+      let result: string[][];
+      if (errorOccurred) {
+        result = errorResult!;
+      } else if (finalAnswer) {
+        result = parseAnswerTo2D(finalAnswer);
+        cache.set(cacheKey, { result, rangeFingerprint: currentFingerprint });
+      } else {
+        result = [[""]];
       }
 
       // Inject formula cell address as default destination for pivot tables and charts.
@@ -421,15 +402,15 @@ function askAI(query: string, ...args: unknown[]): void {
       if (handler && hasMutations) {
         try { await handler(pendingMutations); } catch (e) { console.warn("ASKAI mutation apply failed:", e); }
       }
+
+      return result;
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        // Request was cancelled — do not cache
-        return;
+        // Request was cancelled — return empty to avoid caching
+        return [[""]];
       }
       const message = err instanceof Error ? err.message : "Cannot reach backend";
-      invocation.setResult([[`#ERROR: ${message}`]]);
-    } finally {
-      activeControllers.delete(requestId);
+      return [[`#ERROR: ${message}`]];
     }
   })();
 }

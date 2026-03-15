@@ -18,10 +18,16 @@ export interface PendingMutations {
   pivotTableInserts?: PivotTableInsert[];
 }
 
+/** A cached =ASKAI result together with the range fingerprint at computation time. */
+export interface AskAICacheEntry {
+  result: string[][];
+  rangeFingerprint: string;
+}
+
 declare global {
   interface Window {
     __MYEXCELCOMPANION_PROVIDER?: string;
-    __MYEXCELCOMPANION_CACHE?: Map<string, string[][]>;
+    __MYEXCELCOMPANION_CACHE?: Map<string, AskAICacheEntry>;
     __MYEXCELCOMPANION_APPLY_MUTATIONS?: (mutations: PendingMutations) => Promise<void>;
   }
 }
@@ -46,7 +52,7 @@ export function setSharedProvider(provider: string): void {
 /**
  * Returns the shared result cache map, creating it on first access.
  */
-export function getAskAICache(): Map<string, string[][]> {
+export function getAskAICache(): Map<string, AskAICacheEntry> {
   if (!window.__MYEXCELCOMPANION_CACHE) {
     window.__MYEXCELCOMPANION_CACHE = new Map();
   }

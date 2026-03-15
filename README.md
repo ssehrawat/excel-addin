@@ -107,6 +107,30 @@ Other useful scripts:
 - Use the settings gear to switch providers or manage MCP servers.
 - Click **New Chat** to reset the conversation.
 
+### Using the `=ASKAI` formula
+
+The add-in also provides a custom Excel function that queries the LLM directly from a cell formula:
+
+```
+=MYEXCELCOMPANION.ASKAI(query, [range1], [range2], ...)
+```
+
+- **query** — The question or instruction to send to the AI (required)
+- **range1, range2, ...** — Optional cell ranges to include as context (variadic)
+
+The function uses the same LLM backend and whichever provider is currently selected in the taskpane.
+
+**Examples:**
+- `=MYEXCELCOMPANION.ASKAI("What is the capital of France?")` — simple question
+- `=MYEXCELCOMPANION.ASKAI("Summarize this data", A1:B20)` — with cell data context
+- `=MYEXCELCOMPANION.ASKAI("Compare revenue vs cost", A1:A10, C1:C10)` — multiple ranges
+
+**Status:** While the AI processes your query, the cell shows `#BUSY!` until the final answer is ready.
+
+**Spill behavior:** Multi-line or tabular answers spill into adjacent cells as a 2D array. Tab-separated responses produce NxM grids; plain multi-line responses produce Nx1 vertical spills.
+
+**Recalculation:** Results are cached per unique query+data combination. If input data changes, the cached result is returned instantly (no API call). To force a fresh API call, press **F2+Enter** on the cell or **Ctrl+Shift+F9** to recalculate all ASKAI cells. You can also click "Clear AI Cache" in the taskpane to wipe the cache entirely.
+
 ### Configuration
 
 All backend settings use the `COPILOT_` prefix (via pydantic-settings). Key variables:

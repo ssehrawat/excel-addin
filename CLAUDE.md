@@ -100,11 +100,12 @@ User types prompt → App.tsx handleSend()
            → insertPivotTables()     [excel.ts]
 
 =MYEXCELCOMPANION.ASKAI(query, ranges...) → functions.ts askAI()
-  ├─ Check cache → if hit, return immediately
+  ├─ Check fingerprint cache → if input changed, return cached result
+  ├─ If same inputs (manual recalc), evict cache → re-fetch
   ├─ getSharedProvider() → read provider from window global
   ├─ rangesToContext(ranges) → serialize cell data
-  └─ POST /chat (streaming NDJSON, single-shot, no tool calls)
-      → "Thinking..." → status steps → final answer (spill 2D)
+  └─ POST /chat (NDJSON, single-shot, no tool calls)
+      → cell shows #BUSY! → final answer (spill 2D)
 ```
 
 ### Backend Modules
@@ -120,8 +121,8 @@ User types prompt → App.tsx handleSend()
 
 - **`App.tsx`** — Root component. State: messages, workbookMetadata (init once), thinkingSteps, provider selection, MCP server list, busy flags. Init calls `getWorkbookMetadata()` and `initPreviewCache()`. `handleSend()` pre-reads userContext + activeSheetPreview on every send. `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
 - **`excel.ts`** — All Office.js interactions. `getWorkbookMetadata()` collects filename + per-sheet dims. `getUserContext()` returns active sheet name + selected range. `initPreviewCache()` registers `onChanged`/`onActivated` listeners for cache invalidation. `getLightweightSheetPreview(maxRows)` returns event-cached CSV of first N rows (only re-reads when data changes or sheet switches). Five on-demand read tools: `getXlCellRanges` (batched single sync), `getXlRangeAsCsv`, `xlSearchData`, `getAllXlObjects` (two-phase sync), `executeXlOfficeJs`. `executeWorkbookTool(call)` dispatches to the right function. `getSelectionsFromPrompt()` extracts explicit range refs before falling back to `getCurrentSelection()`. `applyCellUpdates()` supports `replace` and `append` modes. `insertPivotTables()` supports explicit `destinationWorksheet` and `destinationAddress` (including `"Sheet2!E1"` format).
-- **`functions/functions.ts`** — `=MYEXCELCOMPANION.ASKAI()` custom function. Streaming, cached, spill-aware. Uses `fetch` with NDJSON parsing, `parseAnswerTo2D()` for 2D output, `computeCacheKey()` for deterministic caching, `rangesToContext()` for serializing cell data.
-- **`functions/metadata.json`** — Custom function schema registered with Office runtime. Declares parameters, result shape, and streaming/cancelable options.
+- **`functions/functions.ts`** — `=MYEXCELCOMPANION.ASKAI()` custom function. Non-streaming async (`Promise<string[][]>`), cached, spill-aware. Participates in Excel's standard calculation engine so F2+Enter and Ctrl+Shift+F9 trigger fresh API calls. Uses `fetch` with NDJSON parsing, `parseAnswerTo2D()` for 2D output, fingerprint-based caching (`computeCacheKey()`), `rangesToContext()` for serializing cell data.
+- **`functions/metadata.json`** — Custom function schema registered with Office runtime. Declares parameters, result shape, and `cancelable`/`requiresAddress` options (`stream: false`).
 - **`sharedState.ts`** — Window-global-backed provider and cache state shared between taskpane and custom function bundles. Provides `getSharedProvider()`, `setSharedProvider()`, `getAskAICache()`, `clearAskAICache()`.
 - **`config.ts`** — `API_BASE_URL` and `DEFAULT_PROVIDER` are injectable via webpack `process.env`.
 - **`types.ts`** — TypeScript mirror of backend schemas. Includes `WorkbookMetadata`, `UserContext`, `WorkbookToolCall/Result`. `ChatStreamEvent` discriminated union includes `tool_call_required`, `status`, and `suggestion` event types.
@@ -160,7 +161,7 @@ Chart type aliases are defined in **both** `providers.py` (`CHART_TYPE_ALIASES` 
 MCP server configs persist to `backend/app/data/mcp_servers.json` (path configurable via `COPILOT_MCP_CONFIG_PATH`). The store uses atomic write (`.tmp` file then rename) with a threading `Lock`.
 
 ### Custom Function Cache Pattern
-`=ASKAI` results are cached in a `Map<string, string[][]>` on `window.__MYEXCELCOMPANION_CACHE`. The cache key is a deterministic concatenation of the query text and all range cell values. `volatile: false` in metadata means Excel only re-invokes when formula inputs change. To force a fresh query: call `clearAskAICache()` then Ctrl+Shift+F9.
+`=ASKAI` results are cached in a `Map<string, AskAICacheEntry>` on `window.__MYEXCELCOMPANION_CACHE`. Each entry stores the result and a range fingerprint. The cache key is `callerAddress + "||" + query`. Fingerprint-based logic distinguishes auto-recalc (input data changed → return cached result) from manual recalc (F2+Enter or Ctrl+Shift+F9 → same inputs → evict & re-fetch). Because the function is non-streaming (`stream: false`), it participates in Excel's standard calculation engine: F2+Enter and Ctrl+Shift+F9 both re-invoke the function. `clearAskAICache()` is still available to force a full cache clear.
 
 ### Shared Runtime State
 The taskpane and custom function bundles are separate webpack chunks that share state via typed window globals (`sharedState.ts`). `setSharedProvider()` is called from `App.tsx` whenever the provider changes. `getSharedProvider()` is called from `functions.ts` on each `=ASKAI` invocation. The `=ASKAI` function collects `cell_updates`, `format_updates`, `chart_inserts`, and `pivot_table_inserts` mutations from the stream and applies them via the taskpane mutation handler bridge. For pivot/chart mutations, the formula cell shows a brief confirmation (e.g. "Pivot table created.") instead of the verbose LLM answer. Destination addresses for pivots/charts are injected from the caller address or an active-cell fallback.
