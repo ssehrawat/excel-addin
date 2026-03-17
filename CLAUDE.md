@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-**Workbook Copilot** — an Excel Office Add-in (taskpane) that lets users chat with their workbook data. The frontend reads cell selections via Office.js, POSTs them to a FastAPI backend, which routes through an LLM provider (mock / OpenAI / Anthropic) and optionally calls external MCP tool servers. Responses stream back as NDJSON and are applied to Excel (cell values, formatting, charts).
+**Workbook Copilot** — an Excel Office Add-in (taskpane) that lets users chat with their workbook data. The frontend reads cell selections via Office.js, POSTs them to a FastAPI backend, which routes through an LLM provider (OpenAI / Anthropic) and optionally calls external MCP tool servers. Responses stream back as NDJSON and are applied to Excel (cell values, formatting, charts).
 
 ---
 
@@ -58,7 +58,6 @@ All settings use the `COPILOT_` prefix (handled by `pydantic-settings`). Key var
 | `COPILOT_ANTHROPIC_MODEL` | Default: `claude-3-5-sonnet-20240620` |
 | `COPILOT_OPENAI_API_KEY` | OpenAI API key |
 | `COPILOT_OPENAI_MODEL` | Default: `gpt-4o-mini` |
-| `COPILOT_MOCK_PROVIDER_ENABLED` | `true`/`false` — enable mock provider |
 | `COPILOT_REQUEST_TIMEOUT_SECONDS` | Overall request timeout |
 
 Settings are loaded once and cached via `@lru_cache` in `config.py`. To reload settings during development, restart uvicorn.
@@ -112,7 +111,7 @@ User types prompt → App.tsx handleSend()
 
 - **`main.py`** — FastAPI app factory. Registers CORS, constructs `MCPServerService` and `LangGraphOrchestrator`. Owns all route handlers.
 - **`orchestrator.py`** — Central logic. ReAct agent loop (up to `MAX_REACT_ITERATIONS = 8`). Per-request MCP health check via `_get_live_mcp_tools()`. MCP tool calls (`mcp__<server_id>__<tool_name>`) are routed server-side; Excel tool calls emit `tool_call_required` for browser round-trip. LangGraph graph handles the non-streaming fallback (`run()`).
-- **`providers.py`** — Three providers: `MockProvider`, `OpenAIProvider`, `AnthropicProvider`. `MCPToolEntry` dataclass + `build_system_prompt(mcp_tools)` dynamically construct the system prompt with available MCP tools. Provider `__init__` accepts `mcp_tools`. `stream_result()` method on all providers. Both OpenAI and Anthropic attempt JSON mode and fall back to lax parsing.
+- **`providers.py`** — Two providers: `OpenAIProvider`, `AnthropicProvider`. `MCPToolEntry` dataclass + `build_system_prompt(mcp_tools)` dynamically construct the system prompt with available MCP tools. Provider `__init__` accepts `mcp_tools`. `stream_result()` method on all providers. Both OpenAI and Anthropic attempt JSON mode and fall back to lax parsing.
 - **`mcp.py`** — MCP server persistence (`MCPServerStore` → JSON file at `data/mcp_servers.json`). Single transport client: `MCPJsonRpcClient` (JSON-RPC 2.0 with session init/terminate). `MCPServerService` uses JSON-RPC exclusively.
 - **`schemas.py`** — All Pydantic models shared across the backend. Includes `WorkbookMetadata`, `SheetMetadata`, `UserContext`, `WorkbookToolCall`, `WorkbookToolResult`. Source of truth for message kinds (`thought`, `step`, `final`, `suggestion`, `context`), cell/format/chart update shapes.
 - **`config.py`** — `Settings` (pydantic-settings, `extra="ignore"`). Always use `get_settings()` — never instantiate `Settings` directly.
