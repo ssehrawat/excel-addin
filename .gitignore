@@ -12,3 +12,5 @@ Thumbs.db
 .DS_Store
 localhost.cer.der
 docs/
+.cursor/
+enhancements.md

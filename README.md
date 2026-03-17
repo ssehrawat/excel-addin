@@ -1,6 +1,6 @@
 ## Workbook Copilot
 
-An Excel Office Add-in (taskpane) that lets users chat with their workbook data. The frontend reads cell selections via Office.js, POSTs them to a FastAPI backend, which routes through an LLM provider (mock / OpenAI / Anthropic) and optionally calls external MCP tool servers. Responses stream back as NDJSON and are applied to Excel — cell values, formatting, charts, and pivot tables.
+An Excel Office Add-in (taskpane) that lets users chat with their workbook data. The frontend reads cell selections via Office.js, POSTs them to a FastAPI backend, which routes through an LLM provider (OpenAI / Anthropic) and optionally calls external MCP tool servers. Responses stream back as NDJSON and are applied to Excel — cell values, formatting, charts, and pivot tables.
 
 ### Features
 
@@ -11,7 +11,7 @@ An Excel Office Add-in (taskpane) that lets users chat with their workbook data.
 - **Pivot table inserts** — rows, columns, values, filters inferred from sheet context
 - **MCP tool servers** — connect external data sources (databases, APIs) that the LLM can query server-side
 - **Excel read tools** — LLM can request additional workbook data mid-conversation (up to 3 tool-call rounds per message)
-- **Multi-provider** — switch between mock, OpenAI, and Anthropic at runtime
+- **Multi-provider** — switch between OpenAI and Anthropic at runtime
 
 ### Quick Start
 
@@ -141,7 +141,6 @@ All backend settings use the `COPILOT_` prefix (via pydantic-settings). Key vari
 | `COPILOT_ANTHROPIC_MODEL` | Default: `claude-3-5-sonnet-20240620` |
 | `COPILOT_OPENAI_API_KEY` | OpenAI API key |
 | `COPILOT_OPENAI_MODEL` | Default: `gpt-4o-mini` |
-| `COPILOT_MOCK_PROVIDER_ENABLED` | `true`/`false` — enable mock provider |
 | `COPILOT_REQUEST_TIMEOUT_SECONDS` | Overall request timeout |
 
 ### Docker (optional)
