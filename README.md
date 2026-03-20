@@ -11,7 +11,15 @@ An Excel Office Add-in (taskpane) that lets users chat with their workbook data.
 - **Pivot table inserts** — rows, columns, values, filters inferred from sheet context
 - **MCP tool servers** — connect external data sources (databases, APIs) that the LLM can query server-side
 - **Excel read tools** — LLM can request additional workbook data mid-conversation (up to 3 tool-call rounds per message)
+- **`=ASKAI` custom function** — query the LLM directly from a cell formula with optional range context; results spill as 2D arrays
 - **Multi-provider** — switch between OpenAI and Anthropic at runtime
+
+### Prerequisites
+
+- Excel desktop with sideloading enabled (Microsoft 365 recommended)
+- Node.js 18+
+- npm 9+
+- Python 3.11+
 
 ### Quick Start
 
@@ -29,13 +37,6 @@ The startup script checks prerequisites, creates a Python venv, installs depende
 copies `.env.example` to `.env` if needed, and boots both services with HTTPS.
 
 Use `bash start.sh --install` to force-reinstall all dependencies.
-
-### Prerequisites
-
-- Excel desktop with sideloading enabled (Microsoft 365 recommended)
-- Node.js 18+
-- npm 9+
-- Python 3.11+
 
 ### Backend setup
 
@@ -94,8 +95,26 @@ Other useful scripts:
 ### Sideload in Excel
 
 1. Ensure the backend (`https://localhost:8000`) and frontend (`https://localhost:3000`) are both running over HTTPS.
-2. In Excel, go to **Insert → My Add-ins → Upload My Add-in** and select the `manifest.xml` at the repo root.
-3. The taskpane button will appear under the **MyExcelCompanion** tab in the ribbon.
+
+2. **Prepare & share the manifest folder**
+   - Create a folder (e.g., `C:\ExcelAddins`) and place your `manifest.xml` inside.
+   - Right-click the folder > **Properties** > **Sharing** tab.
+   - Click **Share...**, select your user (or "Everyone"), and click **Add** then **Share**.
+   - Copy the Network Path shown (e.g., `\\Your-Computer-Name\ExcelAddins`).
+
+3. **Register the path in Excel**
+   - In Excel, go to **File > Options > Trust Center**.
+   - Click **Trust Center Settings...** and select **Trusted Add-in Catalogs**.
+   - In the **Catalog URL** box, paste the Network Path from Step 2.
+   - Click **Add catalog**.
+   - Check the box under **Show in Menu** for that catalog entry.
+   - Click **OK** and **restart Excel** (close all open windows first).
+
+4. **Load the add-in**
+   - Go to the **Home** tab and click the **Add-ins** button (far right).
+   - Click **More Add-ins** at the bottom of the pane.
+   - Select the **SHARED FOLDER** tab at the top of the dialog.
+   - Your add-in should appear there — select it and click **Add**.
 
 ### Using the chatbot
 
