@@ -232,6 +232,40 @@ class TestBuildFormatUpdates:
     def test_none_input(self):
         assert build_format_updates(None) == []
 
+    def test_number_format(self):
+        raw = [{"address": "A1", "numberFormat": "#,##0.00"}]
+        updates = build_format_updates(raw)
+        assert updates[0].number_format == "#,##0.00"
+
+    def test_border_properties(self):
+        raw = [{"address": "A1:D10", "borderColor": "#000000",
+                "borderStyle": "Continuous", "borderWeight": "Thin"}]
+        updates = build_format_updates(raw)
+        assert updates[0].border_color == "#000000"
+        assert updates[0].border_style == "Continuous"
+        assert updates[0].border_weight == "Thin"
+
+    def test_snake_case_border_keys(self):
+        raw = [{"address": "A1", "border_color": "#333",
+                "border_style": "Dash", "border_weight": "Medium"}]
+        updates = build_format_updates(raw)
+        assert updates[0].border_color == "#333"
+
+    def test_all_fields_together(self):
+        raw = [{"address": "Sheet1!A1:D1", "fillColor": "#4472C4",
+                "fontColor": "#FFFFFF", "bold": True, "italic": False,
+                "numberFormat": "0.00%", "borderColor": "#000000",
+                "borderStyle": "Continuous", "borderWeight": "Thin"}]
+        updates = build_format_updates(raw)
+        assert len(updates) == 1
+        u = updates[0]
+        assert u.fill_color == "#4472C4"
+        assert u.font_color == "#FFFFFF"
+        assert u.bold is True
+        assert u.italic is False
+        assert u.number_format == "0.00%"
+        assert u.border_color == "#000000"
+
 
 # ---- _normalize_chart_type ----
 
@@ -365,6 +399,31 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt([])
         assert "RULES FOR PIVOT TABLE INSERTS" in prompt
         assert "pivot_table_inserts" in prompt
+
+    def test_format_update_schema_present(self):
+        prompt = build_system_prompt([])
+        assert "fillColor" in prompt
+        assert "borderColor" in prompt
+        assert "borderWeight" in prompt
+
+    def test_chart_source_rule_present(self):
+        prompt = build_system_prompt([])
+        assert "CHART SOURCE RULE" in prompt
+
+    def test_placement_rule_present(self):
+        prompt = build_system_prompt([])
+        assert "PLACEMENT RULE" in prompt
+
+    def test_formula_rule_strengthened(self):
+        prompt = build_system_prompt([])
+        assert "FORMULA RULE" in prompt
+        assert "=SUM" in prompt
+        assert "cross-check column letters" in prompt
+
+    def test_column_headers_in_context_description(self):
+        prompt = build_system_prompt([])
+        assert "columnHeaders" in prompt
+        assert "column-letter markers" in prompt
 
 
 # ---- build_prompt_payload ----

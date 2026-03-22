@@ -109,9 +109,12 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
     parts: List[str] = [
         "You are Workbook Copilot, an AI assistant for Microsoft Excel.\n\n"
         "You receive structured context:\n"
-        "- workbook_metadata: Filename, all sheets with row/column dimensions\n"
+        "- workbook_metadata: Filename, all sheets with row/column dimensions and "
+        "column headers (first-row values for every sheet via columnHeaders)\n"
         "- user_context: Active sheet name, currently selected range address\n"
-        "- active_sheet_preview: First rows of active sheet as CSV (may be truncated)\n"
+        "- active_sheet_preview: First rows of active sheet as CSV. The first row "
+        "contains column-letter markers ([A],[B],[C],...) mapping positions to "
+        "Excel column letters.\n"
         "- selection: Values of cells the user has explicitly selected\n\n",
         "EXCEL TOOLS (request when you need more data):\n"
         "- get_xl_cell_ranges: Read specific ranges with formulas and formatting. "
@@ -184,12 +187,27 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "Every cell update MUST include: `address` (A1 notation, include worksheet like "
         "'Sheet1!E7:E9' when known), `mode` ('replace' or 'append'), and `values` "
         "(two-dimensional array; wrap single rows like [[\"Header\"], [123]]).\n"
-        "FORMULA RULE: When writing calculation results to cells, ALWAYS use Excel "
-        "formulas (e.g. =SUM(A1:A10), =AVERAGE(B2:B50), =VLOOKUP(...)) instead of "
-        "static computed values. Formulas keep the workbook dynamic and update when "
-        "source data changes. Only use static values for text labels or data that "
-        "does not derive from existing cell data.\n"
+        "**FORMULA RULE (CRITICAL)**: ALWAYS use Excel formulas instead of hardcoded computed values. "
+        "Examples: =SUM(A1:A10) not 5432, =AVERAGE(B2:B50) not 78.5, ='Sector Allocation'!B2 not \"42%\". "
+        "Only use static values for text labels/headers or data not derived from existing cells. "
+        "When writing formulas, ALWAYS cross-check column letters against the column markers in "
+        "active_sheet_preview or the columnHeaders in workbook_metadata. Never guess column "
+        "positions — verify from provided context.\n"
+        "PLACEMENT RULE: When placing new data (cell_updates, chart_inserts), choose an address "
+        "in an empty area — below or to the right of existing data — unless the user explicitly "
+        "specifies where. Do NOT overwrite existing cell values. Check active_sheet_preview to "
+        "identify the used range and place output beyond it. For charts, omit topLeftCell and "
+        "the system will auto-position in empty space.\n"
         "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
+        "Each format update has: `address` (A1 notation with sheet), and any combination of: "
+        "`fillColor` (hex like '#4472C4'), `fontColor` (hex like '#FFFFFF'), `bold` (true/false), "
+        "`italic` (true/false), `numberFormat` (Excel format string), `borderColor` (hex), "
+        "`borderStyle` ('Continuous'|'Dash'|'None'|...), `borderWeight` ('Thin'|'Medium'|'Thick'). "
+        "Only include non-null fields. Example: {\"address\":\"Sheet1!A1:D1\",\"fillColor\":\"#4472C4\",\"fontColor\":\"#FFFFFF\",\"bold\":true}\n"
+        "CHART SOURCE RULE: When the user has selected specific ranges, use those exact ranges "
+        "as sourceAddress. For non-contiguous selections, use comma-separated format "
+        "(e.g. 'A1:A13,G1:G13'). Do NOT expand into a single contiguous block that includes "
+        "unwanted columns.\n"
         "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
         "Every chart insert MUST include `chartType` (Excel.ChartType), `sourceAddress`, "
         "and a descriptive `title`, plus `xAxisTitle` and `yAxisTitle` for the axes. "
@@ -1014,6 +1032,10 @@ def build_format_updates(raw_updates: Any) -> List[FormatUpdate]:
         font_color = candidate.get("font_color", candidate.get("fontColor"))
         bold = candidate.get("bold")
         italic = candidate.get("italic")
+        number_format = candidate.get("number_format", candidate.get("numberFormat"))
+        border_color = candidate.get("border_color", candidate.get("borderColor"))
+        border_style = candidate.get("border_style", candidate.get("borderStyle"))
+        border_weight = candidate.get("border_weight", candidate.get("borderWeight"))
         try:
             updates.append(
                 FormatUpdate(
@@ -1023,6 +1045,10 @@ def build_format_updates(raw_updates: Any) -> List[FormatUpdate]:
                     font_color=font_color,
                     bold=bold if isinstance(bold, bool) else None,
                     italic=italic if isinstance(italic, bool) else None,
+                    number_format=number_format,
+                    border_color=border_color,
+                    border_style=border_style,
+                    border_weight=border_weight,
                 )
             )
         except ValidationError as error:

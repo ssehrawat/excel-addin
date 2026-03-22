@@ -150,6 +150,15 @@ When the LLM needs more data than the pre-read provides, it returns `needs_data:
 ### MCP Tool Result Handling
 `orchestrator._summarize_tool_result()` tries to render results as a markdown table (up to 10 rows). It handles MongoDB-style extended JSON (`$date`, `$oid`, `$numberDouble`). Results are injected as `MessageKind.CONTEXT` / `MessageRole.SYSTEM` messages before the LLM call, not as separate API tool calls.
 
+### Format Updates Schema
+System prompt includes detailed field names and types (fillColor, fontColor, bold, italic, numberFormat, borderColor, borderStyle, borderWeight). `build_format_updates()` extracts all 8 formatting fields.
+
+### Chart Source Address
+System prompt instructs LLM to use user's exact selected ranges. Non-contiguous ranges use comma-separated format (e.g. "A1:A13,G1:G13"). Frontend `insertCharts()` handles both single and comma-separated ranges.
+
+### Placement Rule
+System prompt instructs LLM to place new data in empty areas to avoid overwriting. `insertCharts()` auto-positions charts below used range when `topLeftCell` is omitted.
+
 ### Chart Type Normalization
 Chart type aliases are defined in **both** `providers.py` (`CHART_TYPE_ALIASES` dict) and `excel.ts` (`CHART_TYPE_ALIASES` record). If a new chart type is added, update both. The frontend does a second normalization pass against `Excel.ChartType` enum values.
 

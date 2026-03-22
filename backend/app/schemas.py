@@ -146,6 +146,9 @@ class SheetMetadata(BaseModel):
     index: int = 0
     max_rows: int = Field(default=0, alias="maxRows")
     max_columns: int = Field(default=0, alias="maxColumns")
+    column_headers: Optional[List[str]] = Field(
+        default=None, alias="columnHeaders"
+    )
 
     class Config:
         populate_by_name = True

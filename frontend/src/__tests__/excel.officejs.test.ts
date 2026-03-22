@@ -18,6 +18,8 @@ import {
   xlSearchData,
   getAllXlObjects,
   executeWorkbookTool,
+  applyCellUpdates,
+  insertCharts,
 } from "../excel";
 
 beforeEach(() => {
@@ -57,6 +59,10 @@ describe("getWorkbookMetadata", () => {
                   columnCount: 5,
                   load: vi.fn(),
                 }),
+                getRangeByIndexes: () => ({
+                  values: [["Name", "Age", "City", "State", "Zip"]],
+                  load: vi.fn(),
+                }),
               },
             ],
             load: vi.fn(),
@@ -71,6 +77,9 @@ describe("getWorkbookMetadata", () => {
     expect(result.fileName).toBe("Test.xlsx");
     expect(result.sheetsMetadata).toHaveLength(1);
     expect(result.totalSheets).toBe(1);
+    expect(result.sheetsMetadata[0].columnHeaders).toEqual([
+      "Name", "Age", "City", "State", "Zip",
+    ]);
   });
 
   it("handles Excel.run error gracefully", async () => {
@@ -110,6 +119,7 @@ describe("getWorkbookMetadata", () => {
     const result = await getWorkbookMetadata();
     expect(result.success).toBe(true);
     expect(result.sheetsMetadata[0].maxRows).toBe(0);
+    expect(result.sheetsMetadata[0].columnHeaders).toBeUndefined();
   });
 
   it("handles multiple sheets", async () => {
@@ -123,6 +133,10 @@ describe("getWorkbookMetadata", () => {
           isNullObject: false,
           rowCount: 5,
           columnCount: 3,
+          load: vi.fn(),
+        }),
+        getRangeByIndexes: () => ({
+          values: [["H1", "H2", "H3"]],
           load: vi.fn(),
         }),
       });
@@ -145,6 +159,7 @@ describe("getWorkbookMetadata", () => {
     const result = await getWorkbookMetadata();
     expect(result.sheetsMetadata).toHaveLength(2);
     expect(result.totalSheets).toBe(2);
+    expect(result.sheetsMetadata[0].columnHeaders).toEqual(["H1", "H2", "H3"]);
   });
 });
 
@@ -405,7 +420,7 @@ describe("getLightweightSheetPreview", () => {
     });
 
     const result = await getLightweightSheetPreview(2);
-    expect(result).toBe("Name,Age\nAlice,30");
+    expect(result).toBe("[A],[B]\nName,Age\nAlice,30");
     // Should request only 2 rows (min of maxRows=2 and rowCount=5000)
     expect(getRangeByIndexes).toHaveBeenCalledWith(0, 0, 2, 2);
   });
@@ -436,7 +451,7 @@ describe("getLightweightSheetPreview", () => {
     });
 
     const result = await getLightweightSheetPreview(50);
-    expect(result).toBe("A\nB\nC");
+    expect(result).toBe("[A]\nA\nB\nC");
     expect(getRangeByIndexes).toHaveBeenCalledWith(0, 0, 3, 1);
   });
 
@@ -468,12 +483,12 @@ describe("getLightweightSheetPreview", () => {
 
     // First call: reads from Excel
     const first = await getLightweightSheetPreview();
-    expect(first).toBe("cached");
+    expect(first).toBe("[A]\ncached");
     const syncCountAfterFirst = syncFn.mock.calls.length;
 
     // Second call: should return cache without calling Excel.run/sync again
     const second = await getLightweightSheetPreview();
-    expect(second).toBe("cached");
+    expect(second).toBe("[A]\ncached");
     expect(syncFn.mock.calls.length).toBe(syncCountAfterFirst);
   });
 
@@ -666,16 +681,16 @@ describe("getLightweightSheetPreview — additional edge cases", () => {
     });
 
     const first = await getLightweightSheetPreview();
-    expect(first).toBe("call-1");
+    expect(first).toBe("[A]\ncall-1");
 
     // Cache should serve the same value
     const cached = await getLightweightSheetPreview();
-    expect(cached).toBe("call-1");
+    expect(cached).toBe("[A]\ncall-1");
 
     // Invalidate and re-read
     resetPreviewCache();
     const refreshed = await getLightweightSheetPreview();
-    expect(refreshed).toBe("call-2");
+    expect(refreshed).toBe("[A]\ncall-2");
   });
 
   it("handles null cell values gracefully", async () => {
@@ -702,7 +717,7 @@ describe("getLightweightSheetPreview — additional edge cases", () => {
     });
 
     const result = await getLightweightSheetPreview();
-    expect(result).toBe("hello,,42");
+    expect(result).toBe("[A],[B],[C]\nhello,,42");
   });
 
   it("returns null and logs error when Excel.run throws", async () => {
@@ -1018,5 +1033,89 @@ describe("getXlRangeAsCsv — dedicated tests", () => {
     (globalThis as any).Office.context = null;
     const result = await getXlRangeAsCsv("Sheet1", "A1");
     expect(result).toBe("");
+  });
+});
+
+describe("applyCellUpdates", () => {
+  it("replace mode resizes single-cell range to match values array", async () => {
+    const setValuesFn = vi.fn();
+    const getResizedRange = vi.fn(() => {
+      const obj = { _values: null as any };
+      Object.defineProperty(obj, "values", {
+        set(v: any) { setValuesFn(v); },
+        get() { return obj._values; },
+      });
+      return obj;
+    });
+
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          worksheets: {
+            getActiveWorksheet: () => ({
+              getRange: () => ({
+                getCell: () => ({
+                  getResizedRange,
+                }),
+              }),
+            }),
+          },
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    await applyCellUpdates([{
+      address: "M1",
+      values: [["H1", "H2"], ["a", "b"], ["c", "d"]],
+      mode: "replace",
+    }]);
+
+    // Should resize from 1x1 to 3x2 (rowCount-1=2, colCount-1=1)
+    expect(getResizedRange).toHaveBeenCalledWith(2, 1);
+  });
+});
+
+describe("insertCharts — auto-positioning", () => {
+  it("positions chart below used range when topLeftCell is absent", async () => {
+    const setPositionFn = vi.fn();
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          worksheets: {
+            getActiveWorksheet: () => ({
+              getRange: () => ({}),
+              getUsedRangeOrNullObject: () => ({
+                isNullObject: false,
+                rowIndex: 0,
+                rowCount: 13,
+                load: vi.fn(),
+              }),
+              getCell: (row: number, col: number) => ({ row, col }),
+              charts: {
+                add: () => ({
+                  name: null,
+                  title: { text: "", visible: false },
+                  axes: {
+                    categoryAxis: { title: { text: "", visible: false } },
+                    valueAxis: { title: { text: "", visible: false } },
+                  },
+                  setPosition: setPositionFn,
+                }),
+              },
+            }),
+          },
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    await insertCharts([{
+      chartType: "ColumnClustered",
+      sourceAddress: "A1:B13",
+      title: "Test Chart",
+    }]);
+
+    expect(setPositionFn).toHaveBeenCalled();
   });
 });
