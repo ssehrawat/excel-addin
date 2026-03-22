@@ -143,13 +143,33 @@ export async function getWorkbookMetadata(): Promise<WorkbookMetadata> {
       usedRanges.forEach((ur) => ur.load(["isNullObject", "rowCount", "columnCount"]));
       await context.sync();
 
-      const sheetsMetadata: SheetMetadata[] = sheetItems.map((ws, i) => ({
-        id: ws.id,
-        name: ws.name,
-        index: ws.position,
-        maxRows: !usedRanges[i].isNullObject ? usedRanges[i].rowCount : 0,
-        maxColumns: !usedRanges[i].isNullObject ? usedRanges[i].columnCount : 0
-      }));
+      // Read first row (headers) for each sheet
+      const headerRanges = sheetItems.map((ws, i) => {
+        if (usedRanges[i].isNullObject || usedRanges[i].columnCount === 0) {
+          return null;
+        }
+        const r = ws.getRangeByIndexes(0, 0, 1, usedRanges[i].columnCount);
+        r.load("values");
+        return r;
+      });
+      await context.sync();
+
+      const sheetsMetadata: SheetMetadata[] = sheetItems.map((ws, i) => {
+        const hasData = !usedRanges[i].isNullObject;
+        const headers = headerRanges[i]
+          ? (headerRanges[i]!.values[0] as (string | number | boolean | null)[]).map(
+              (v) => (v == null ? "" : String(v))
+            )
+          : undefined;
+        return {
+          id: ws.id,
+          name: ws.name,
+          index: ws.position,
+          maxRows: hasData ? usedRanges[i].rowCount : 0,
+          maxColumns: hasData ? usedRanges[i].columnCount : 0,
+          columnHeaders: headers
+        };
+      });
 
       return {
         success: true,
@@ -273,7 +293,22 @@ export async function getLightweightSheetPreview(
       await context.sync();
 
       const rows = previewRange.values as (string | number | boolean | null)[][];
-      const csv = rows
+
+      // Build column-letter header row so the LLM can map positions to Excel columns
+      const colCount = usedRange.columnCount;
+      const colLetters: string[] = [];
+      for (let i = 0; i < colCount; i++) {
+        let letter = "";
+        let n = i;
+        while (n >= 0) {
+          letter = String.fromCharCode(65 + (n % 26)) + letter;
+          n = Math.floor(n / 26) - 1;
+        }
+        colLetters.push(`[${letter}]`);
+      }
+      const letterRow = colLetters.join(",");
+
+      const csv = letterRow + "\n" + rows
         .map((row) =>
           row
             .map((cell) => {
@@ -669,7 +704,11 @@ export async function applyCellUpdates(updates: CellUpdate[]): Promise<void> {
         }
         case "replace":
         default: {
-          range.values = update.values;
+          const rowCount = update.values.length;
+          const colCount = update.values[0]?.length ?? 1;
+          const topLeft = range.getCell(0, 0);
+          const target = topLeft.getResizedRange(rowCount - 1, colCount - 1);
+          target.values = update.values;
           break;
         }
       }
@@ -767,7 +806,18 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
           sourceSheetName != null
             ? context.workbook.worksheets.getItem(sourceSheetName)
             : context.workbook.worksheets.getActiveWorksheet();
-        const sourceRange = sourceWorksheet.getRange(rangeAddress);
+        // Handle non-contiguous ranges (comma-separated like "A1:A13,G1:G13")
+        let sourceData: any;
+        if (rangeAddress.includes(",")) {
+          try {
+            sourceData = (sourceWorksheet as any).getRanges(rangeAddress);
+          } catch {
+            // Fallback for older API: use bounding-box single range
+            sourceData = sourceWorksheet.getRange(rangeAddress.split(",")[0]);
+          }
+        } else {
+          sourceData = sourceWorksheet.getRange(rangeAddress);
+        }
 
         const destinationSheetName = normalizeSheetName(
           insert.destinationWorksheet ?? undefined
@@ -799,7 +849,7 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
 
         const chart = destinationWorksheet.charts.add(
           chartType,
-          sourceRange,
+          sourceData,
           seriesBy
         );
         if (insert.name) {
@@ -823,6 +873,15 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
             ? destinationWorksheet.getRange(insert.bottomRightCell)
             : undefined;
           chart.setPosition(topLeft, bottomRight);
+        } else {
+          const usedRange = destinationWorksheet.getUsedRangeOrNullObject();
+          usedRange.load(["isNullObject", "rowIndex", "rowCount"]);
+          await context.sync();
+          if (!usedRange.isNullObject) {
+            const targetRow = usedRange.rowIndex + usedRange.rowCount + 1;
+            const topLeft = destinationWorksheet.getCell(targetRow, 0);
+            chart.setPosition(topLeft);
+          }
         }
       } catch (error) {
         console.error("Unable to insert chart", insert, error);

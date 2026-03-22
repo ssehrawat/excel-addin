@@ -98,6 +98,7 @@ export interface SheetMetadata {
   index: number;
   maxRows: number;
   maxColumns: number;
+  columnHeaders?: string[];
 }
 
 export interface WorkbookMetadata {
