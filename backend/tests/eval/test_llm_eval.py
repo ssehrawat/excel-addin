@@ -280,3 +280,22 @@ class TestCustomFunctionResponse:
         msgs = assemble_messages_from_payload(parsed, "Summarize this data")
         assert len(msgs) == 1
         assert msgs[0].kind == MessageKind.FINAL
+
+
+class TestTranscribeRoundtrip:
+    """Fixture: transcribe_response.json — Whisper API response shape."""
+
+    @pytest.fixture
+    def payload(self):
+        return _load_fixture("transcribe_response.json")
+
+    def test_has_text_field(self, payload):
+        assert "text" in payload
+        assert isinstance(payload["text"], str)
+
+    def test_text_non_empty(self, payload):
+        assert len(payload["text"]) > 0
+
+    def test_response_shape(self, payload):
+        """The transcribe response should contain only the 'text' key."""
+        assert set(payload.keys()) == {"text"}

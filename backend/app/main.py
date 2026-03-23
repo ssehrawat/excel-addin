@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import logging
 import json
-
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -134,6 +132,23 @@ def create_app(settings: Settings) -> FastAPI:
     async def refresh_mcp_server(server_id: str) -> MCPServerResponse:
         record = await mcp_service.refresh_server(server_id)
         return MCPServerResponse(server=mcp_service.to_public(record))
+
+    @app.post("/transcribe", tags=["speech"])
+    async def transcribe_audio(audio: UploadFile = File(...)):
+        """Transcribe uploaded audio using OpenAI Whisper API."""
+        from openai import AsyncOpenAI
+
+        settings = get_settings()
+        if not settings.openai_api_key:
+            raise HTTPException(400, "OpenAI API key required for transcription")
+
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        content = await audio.read()
+        transcript = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio.filename or "audio.webm", content, audio.content_type or "audio/webm"),
+        )
+        return {"text": transcript.text}
 
     @app.post("/chat", tags=["chat"])
     async def chat_endpoint(chat_request: ChatRequest, http_request: Request):

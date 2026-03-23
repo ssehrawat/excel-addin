@@ -144,11 +144,18 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
 
     parts.append(
         "CLARIFICATION:\n"
-        "- If the user's query is ambiguous, too vague, or missing critical details "
-        "(e.g. which sheet, which range, what calculation), ask a clarifying question "
-        "instead of guessing. Return a direct answer with your question in the "
-        "\"answer\" field. Do NOT use needs_data for clarification — just ask in "
-        "natural language.\n\n"
+        "- STRONGLY prefer acting over asking. Make reasonable assumptions using the "
+        "workbook metadata, sheet preview, selection context, and column headers. "
+        "For example: if only one sheet has data, use it; if the user says "
+        "\"create a chart\" without specifying type, pick the most appropriate one; "
+        "if headers are visible, infer the relevant columns.\n"
+        "- Only ask a clarifying question when it is genuinely IMPOSSIBLE to proceed "
+        "— e.g. the user says \"analyze\" with zero context about what to analyze "
+        "and the workbook has multiple unrelated sheets with no obvious target. "
+        "Even then, prefer making a best-effort attempt with a note about your "
+        "assumptions over asking.\n"
+        "- When you must ask, return it in the \"answer\" field as natural language. "
+        "Do NOT use needs_data for clarification.\n\n"
     )
 
     parts.append(

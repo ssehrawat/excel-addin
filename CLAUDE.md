@@ -105,11 +105,16 @@ User types prompt → App.tsx handleSend()
   ├─ rangesToContext(ranges) → serialize cell data
   └─ POST /chat (NDJSON, single-shot, no tool calls)
       → cell shows #BUSY! → final answer (spill 2D)
+
+Voice input (mic button in ChatPanel composer):
+  ├─ Strategy 1 (Web Speech API): browser-native recognition → interim/final text → setInput()
+  └─ Strategy 2 (Whisper fallback): MediaRecorder → POST /transcribe → {"text": "..."} → setInput()
+  User reviews transcribed text in textarea → Enter to send (no auto-send)
 ```
 
 ### Backend Modules
 
-- **`main.py`** — FastAPI app factory. Registers CORS, constructs `MCPServerService` and `LangGraphOrchestrator`. Owns all route handlers.
+- **`main.py`** — FastAPI app factory. Registers CORS, constructs `MCPServerService` and `LangGraphOrchestrator`. Owns all route handlers. `POST /transcribe` — audio transcription via OpenAI Whisper (fallback for environments without Web Speech API).
 - **`orchestrator.py`** — Central logic. ReAct agent loop (up to `MAX_REACT_ITERATIONS = 8`). Per-request MCP health check via `_get_live_mcp_tools()`. MCP tool calls (`mcp__<server_id>__<tool_name>`) are routed server-side; Excel tool calls emit `tool_call_required` for browser round-trip. LangGraph graph handles the non-streaming fallback (`run()`).
 - **`providers.py`** — Two providers: `OpenAIProvider`, `AnthropicProvider`. `MCPToolEntry` dataclass + `build_system_prompt(mcp_tools)` dynamically construct the system prompt with available MCP tools. Provider `__init__` accepts `mcp_tools`. `stream_result()` method on all providers. Both OpenAI and Anthropic attempt JSON mode and fall back to lax parsing.
 - **`mcp.py`** — MCP server persistence (`MCPServerStore` → JSON file at `data/mcp_servers.json`). Single transport client: `MCPJsonRpcClient` (JSON-RPC 2.0 with session init/terminate). `MCPServerService` uses JSON-RPC exclusively.
@@ -123,6 +128,7 @@ User types prompt → App.tsx handleSend()
 - **`functions/functions.ts`** — `=MYEXCELCOMPANION.ASKAI()` custom function. Non-streaming async (`Promise<string[][]>`), cached, spill-aware. Participates in Excel's standard calculation engine so F2+Enter and Ctrl+Shift+F9 trigger fresh API calls. Uses `fetch` with NDJSON parsing, `parseAnswerTo2D()` for 2D output, fingerprint-based caching (`computeCacheKey()`), `rangesToContext()` for serializing cell data.
 - **`functions/metadata.json`** — Custom function schema registered with Office runtime. Declares parameters, result shape, and `cancelable`/`requiresAddress` options (`stream: false`).
 - **`sharedState.ts`** — Window-global-backed provider and cache state shared between taskpane and custom function bundles. Provides `getSharedProvider()`, `setSharedProvider()`, `getAskAICache()`, `clearAskAICache()`.
+- **`hooks/useSpeechRecognition.ts`** — Speech-to-text hook with Web Speech API primary + MediaRecorder/Whisper fallback. Auto-detects available strategy on mount and exposes it via the `strategy` field (`"webSpeech" | "whisper" | "none"`). Used by `ChatPanel` for voice input; the active strategy is shown in the mic button tooltip.
 - **`config.ts`** — `API_BASE_URL` and `DEFAULT_PROVIDER` are injectable via webpack `process.env`.
 - **`types.ts`** — TypeScript mirror of backend schemas. Includes `WorkbookMetadata`, `UserContext`, `WorkbookToolCall/Result`. `ChatStreamEvent` discriminated union includes `tool_call_required`, `status`, and `suggestion` event types.
 

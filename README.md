@@ -12,6 +12,7 @@ An Excel Office Add-in (taskpane) that lets users chat with their workbook data.
 - **MCP tool servers** — connect external data sources (databases, APIs) that the LLM can query server-side
 - **Excel read tools** — LLM can request additional workbook data mid-conversation (up to 3 tool-call rounds per message)
 - **`=ASKAI` custom function** — query the LLM directly from a cell formula with optional range context; results spill as 2D arrays
+- **Voice input** — click the mic button to dictate; uses browser speech recognition with Whisper API fallback
 - **Multi-provider** — switch between OpenAI and Anthropic at runtime
 
 ### Prerequisites
@@ -60,6 +61,7 @@ The server exposes:
 | GET | `/health` | Readiness probe |
 | GET | `/providers` | List available LLM providers |
 | POST | `/chat` | Chat endpoint. Send `Accept: application/x-ndjson` for streaming |
+| POST | `/transcribe` | Audio transcription via OpenAI Whisper (voice input fallback) |
 | GET | `/mcp/servers` | List configured MCP servers |
 | POST | `/mcp/servers` | Add a new MCP server |
 | PATCH | `/mcp/servers/{id}` | Update an MCP server (enable/disable) |
