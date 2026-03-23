@@ -70,7 +70,7 @@ Settings are loaded once and cached via `@lru_cache` in `config.py`. To reload s
 
 ```
 User types prompt → App.tsx handleSend()
-  ├─ getWorkbookMetadata()          (once at init, re-used)       [excel.ts]
+  ├─ getWorkbookMetadata()          (fresh each send, parallelized) [excel.ts]
   ├─ initPreviewCache()             (once at init, registers event listeners) [excel.ts]
   ├─ getUserContext()                (fresh each send)             [excel.ts]
   ├─ getLightweightSheetPreview(50)  (event-cached CSV preview)    [excel.ts]
@@ -123,7 +123,7 @@ Voice input (mic button in ChatPanel composer):
 
 ### Frontend Modules
 
-- **`App.tsx`** — Root component. State: messages, workbookMetadata (init once), thinkingSteps, provider selection, MCP server list, busy flags. Init calls `getWorkbookMetadata()` and `initPreviewCache()`. `handleSend()` pre-reads userContext + activeSheetPreview on every send. `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
+- **`App.tsx`** — Root component. State: messages, thinkingSteps, provider selection, MCP server list, busy flags. Init calls `initPreviewCache()`. `handleSend()` pre-reads workbookMetadata + userContext + activeSheetPreview on every send (parallelized). `streamRound()` handles one HTTP POST+stream round. Tool-call loop retries up to 3 times when `tool_call_required` is received. `handleNewChat()` resets messages and thinking steps for a fresh conversation.
 - **`excel.ts`** — All Office.js interactions. `getWorkbookMetadata()` collects filename + per-sheet dims. `getUserContext()` returns active sheet name + selected range. `initPreviewCache()` registers `onChanged`/`onActivated` listeners for cache invalidation. `getLightweightSheetPreview(maxRows)` returns event-cached CSV of first N rows (only re-reads when data changes or sheet switches). Five on-demand read tools: `getXlCellRanges` (batched single sync), `getXlRangeAsCsv`, `xlSearchData`, `getAllXlObjects` (two-phase sync), `executeXlOfficeJs`. `executeWorkbookTool(call)` dispatches to the right function. `getSelectionsFromPrompt()` extracts explicit range refs before falling back to `getCurrentSelection()`. `applyCellUpdates()` supports `replace` and `append` modes. `insertPivotTables()` supports explicit `destinationWorksheet` and `destinationAddress` (including `"Sheet2!E1"` format).
 - **`functions/functions.ts`** — `=MYEXCELCOMPANION.ASKAI()` custom function. Non-streaming async (`Promise<string[][]>`), cached, spill-aware. Participates in Excel's standard calculation engine so F2+Enter and Ctrl+Shift+F9 trigger fresh API calls. Uses `fetch` with NDJSON parsing, `parseAnswerTo2D()` for 2D output, fingerprint-based caching (`computeCacheKey()`), `rangesToContext()` for serializing cell data.
 - **`functions/metadata.json`** — Custom function schema registered with Office runtime. Declares parameters, result shape, and `cancelable`/`requiresAddress` options (`stream: false`).
@@ -145,7 +145,7 @@ The system prompt is the contract — changes there affect all parsing in `assem
 
 ### Workbook Context Pre-Read Pattern
 On every message send, the frontend collects fresh context in parallel before POSTing:
-1. `workbookMetadata` — collected once at add-in init, re-used (filename + all sheets with dims)
+1. `workbookMetadata` — fresh each send, parallelized (filename + all sheets with dims)
 2. `userContext` — active sheet name + selected range address (fresh each send)
 3. `activeSheetPreview` — first 50 rows of active sheet as CSV (event-cached; only re-reads when sheet data changes or user switches sheets, via listeners registered by `initPreviewCache()`)
 4. `selection` — explicit range refs from prompt text, or current selection

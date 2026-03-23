@@ -122,6 +122,41 @@ describe("getWorkbookMetadata", () => {
     expect(result.sheetsMetadata[0].columnHeaders).toBeUndefined();
   });
 
+  it("returns fresh data on each call (no internal caching)", async () => {
+    let callCount = 0;
+    excelRun.mockImplementation(async (cb: (ctx: any) => any) => {
+      callCount++;
+      return cb({
+        workbook: {
+          name: `File${callCount}.xlsx`,
+          load: vi.fn(),
+          worksheets: {
+            items: Array.from({ length: callCount }, (_, i) => ({
+              id: `s${i}`,
+              name: `Sheet${i + 1}`,
+              position: i,
+              load: vi.fn(),
+              getUsedRangeOrNullObject: () => ({
+                isNullObject: true, rowCount: 0, columnCount: 0, load: vi.fn(),
+              }),
+              getRangeByIndexes: vi.fn(),
+            })),
+            load: vi.fn(),
+          },
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    const first = await getWorkbookMetadata();
+    expect(first.fileName).toBe("File1.xlsx");
+    expect(first.totalSheets).toBe(1);
+
+    const second = await getWorkbookMetadata();
+    expect(second.fileName).toBe("File2.xlsx");
+    expect(second.totalSheets).toBe(2);
+  });
+
   it("handles multiple sheets", async () => {
     excelRun.mockImplementation(async (cb: any) => {
       const makeSheet = (id: string, name: string, pos: number) => ({

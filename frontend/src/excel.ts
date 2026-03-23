@@ -111,8 +111,9 @@ const resolveChartType = (rawType: string): Excel.ChartType | null => {
 
 /**
  * Collect workbook-level metadata: filename and all sheet names/dimensions.
- * Called once on add-in init; result is stored in React state and re-used
- * on every subsequent message send.
+ * Called on every chat send (parallelized with getUserContext and
+ * getLightweightSheetPreview) to ensure the LLM always sees fresh sheet
+ * structure.
  *
  * @returns WorkbookMetadata or a failure object if Office is unavailable.
  */

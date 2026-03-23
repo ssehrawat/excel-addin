@@ -23,7 +23,6 @@ import {
   ChatStreamEvent,
   MCPServer,
   CreateMCPServerPayload,
-  WorkbookMetadata,
   WorkbookToolCall,
   WorkbookToolResult
 } from "./types";
@@ -115,8 +114,6 @@ export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [provider, setProviderState] = useState<string>(DEFAULT_PROVIDER);
   const [providers, setProviders] = useState(FALLBACK_PROVIDERS);
-  const [workbookMetadata, setWorkbookMetadata] =
-    useState<WorkbookMetadata | null>(null);
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
   const [mcpServersLoading, setMcpServersLoading] = useState(false);
   const [mcpBusyIds, setMcpBusyIds] = useState<string[]>([]);
@@ -151,21 +148,9 @@ export function App() {
       if (mutations.pivotTableInserts?.length) await insertPivotTables(mutations.pivotTableInserts);
     });
 
-    const initWorkbook = async () => {
-      try {
-        const meta = await getWorkbookMetadata();
-        setWorkbookMetadata(meta);
-        console.debug("Workbook metadata loaded", meta);
-      } catch (err) {
-        console.warn("Failed to load workbook metadata:", err);
-      }
-      try {
-        await initPreviewCache();
-      } catch (err) {
-        console.warn("Failed to init preview cache:", err);
-      }
-    };
-    void initWorkbook();
+    initPreviewCache().catch((err) =>
+      console.warn("Failed to init preview cache:", err)
+    );
   }, []);
 
   // Load available providers from backend
@@ -558,7 +543,8 @@ export function App() {
       }
 
       // Collect per-request context in parallel
-      const [userContext, preview] = await Promise.all([
+      const [freshMetadata, userContext, preview] = await Promise.all([
+        getWorkbookMetadata(),
         getUserContext(),
         getLightweightSheetPreview(50)
       ]);
@@ -573,7 +559,7 @@ export function App() {
         provider,
         messages: messagesRef.current,
         selection,
-        workbookMetadata: workbookMetadata ?? undefined,
+        workbookMetadata: freshMetadata.success ? freshMetadata : undefined,
         userContext,
         activeSheetPreview: preview ?? undefined,
         metadata: {
