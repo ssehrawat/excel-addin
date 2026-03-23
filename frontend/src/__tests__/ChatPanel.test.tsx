@@ -5,7 +5,7 @@
  * step visualization using @testing-library/react.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ChatPanel } from "../components/ChatPanel";
@@ -120,4 +120,79 @@ describe("ChatPanel", () => {
     }
   });
 
+});
+
+/* ── Voice input integration tests ─────────────────────────────── */
+
+describe("ChatPanel — voice input", () => {
+  let savedWebkit: unknown;
+
+  afterEach(() => {
+    if (savedWebkit !== undefined) {
+      (window as Record<string, unknown>).webkitSpeechRecognition = savedWebkit;
+    } else {
+      delete (window as Record<string, unknown>).webkitSpeechRecognition;
+    }
+  });
+
+  function mockWebkitSpeechRecognition() {
+    const instance = {
+      continuous: false,
+      interimResults: false,
+      lang: "",
+      onresult: null as unknown,
+      onerror: null as unknown,
+      onend: null as unknown,
+      start: vi.fn(),
+      stop: vi.fn(function (this: { onend: (() => void) | null }) { this.onend?.(); }),
+      abort: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    };
+    savedWebkit = (window as Record<string, unknown>).webkitSpeechRecognition;
+    (window as Record<string, unknown>).webkitSpeechRecognition = vi.fn(() => instance);
+    return instance;
+  }
+
+  it("renders mic button when speech API available", () => {
+    mockWebkitSpeechRecognition();
+    renderPanel();
+    expect(screen.getByRole("button", { name: "Start voice input (Web Speech API)" })).toBeInTheDocument();
+  });
+
+  it("hides mic button when speech API unavailable", () => {
+    savedWebkit = (window as Record<string, unknown>).webkitSpeechRecognition;
+    delete (window as Record<string, unknown>).webkitSpeechRecognition;
+    delete (window as Record<string, unknown>).SpeechRecognition;
+    // Also clear getUserMedia to ensure whisper fallback isn't available
+    const savedGUM = navigator.mediaDevices?.getUserMedia;
+    if (navigator.mediaDevices) {
+      (navigator.mediaDevices as Record<string, unknown>).getUserMedia = undefined;
+    }
+
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /start voice input/i })).not.toBeInTheDocument();
+
+    // Restore
+    if (navigator.mediaDevices) {
+      (navigator.mediaDevices as Record<string, unknown>).getUserMedia = savedGUM;
+    }
+  });
+
+  it("mic button disabled when busy", () => {
+    mockWebkitSpeechRecognition();
+    renderPanel({ isBusy: true });
+    const micBtn = screen.getByRole("button", { name: "Start voice input (Web Speech API)" });
+    expect(micBtn).toBeDisabled();
+  });
+
+  it("mic button toggles icon on click", () => {
+    mockWebkitSpeechRecognition();
+    renderPanel();
+    const micBtn = screen.getByRole("button", { name: "Start voice input (Web Speech API)" });
+    fireEvent.click(micBtn);
+    // After click, the aria-label should change to "Stop voice input"
+    expect(screen.getByRole("button", { name: "Stop voice input" })).toBeInTheDocument();
+  });
 });

@@ -5,8 +5,9 @@ import {
   makeStyles,
   shorthands
 } from "@fluentui/react-components";
-import { Add24Regular, CheckmarkCircle16Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
+import { Add24Regular, CheckmarkCircle16Filled, Mic24Filled, MicOff24Filled, Send24Filled, Settings24Regular } from "@fluentui/react-icons";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 import { ChatMessage } from "../types";
 
 const useStyles = makeStyles({
@@ -101,6 +102,14 @@ const useStyles = makeStyles({
     minHeight: "44px",
     maxHeight: "160px",
     overflowY: "auto"
+  },
+  micButton: {
+    minWidth: "36px",
+    color: "#6b7280"
+  },
+  micButtonRecording: {
+    minWidth: "36px",
+    color: "#ef4444"
   }
 });
 
@@ -127,6 +136,25 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const { isAvailable, isListening, strategy, toggleListening, stopListening } =
+    useSpeechRecognition({
+      onTranscript: (text, isFinal) => {
+        setInput(text);
+        if (isFinal) {
+          textareaRef.current?.focus();
+        }
+      },
+      onError: (err) => {
+        console.error("[voice]", err);
+      },
+    });
+
+  const strategyLabel = strategy === "webSpeech"
+    ? "Web Speech API"
+    : strategy === "whisper"
+      ? "OpenAI Whisper"
+      : "";
+
   // Auto-scroll to bottom whenever messages or status change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -142,6 +170,7 @@ export function ChatPanel({
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    stopListening();
     const trimmed = input.trim();
     if (!trimmed || isBusy) return;
     setInput("");
@@ -233,6 +262,21 @@ export function ChatPanel({
             rows={1}
             disabled={isBusy}
           />
+          {isAvailable && (
+            <Tooltip
+              content={isListening ? "Stop voice input" : `Start voice input (${strategyLabel})`}
+              relationship="label"
+            >
+              <Button
+                icon={isListening ? <MicOff24Filled /> : <Mic24Filled />}
+                appearance="subtle"
+                className={isListening ? styles.micButtonRecording : styles.micButton}
+                onClick={toggleListening}
+                disabled={isBusy}
+                aria-label={isListening ? "Stop voice input" : `Start voice input (${strategyLabel})`}
+              />
+            </Tooltip>
+          )}
           <Button
             appearance="primary"
             icon={<Send24Filled />}
