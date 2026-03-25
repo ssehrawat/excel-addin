@@ -79,6 +79,34 @@ class TestParseStructuredResponse:
         assert result["answer"] == "x"
         assert result["custom_key"] == 1
 
+    def test_multiline_needs_data_preferred(self):
+        """When LLM returns needs_data + answer on separate lines, pick needs_data."""
+        raw = (
+            '{"needs_data": true, "tool_call": {"tool": "execute_xl_office_js", "args": {"code": "sort code"}}}\n'
+            '{"answer": "Sorted.", "cell_updates": [], "format_updates": [], "chart_inserts": [], "pivot_table_inserts": []}'
+        )
+        result = parse_structured_response(raw)
+        assert result["needs_data"] is True
+        assert result["tool_call"]["tool"] == "execute_xl_office_js"
+
+    def test_multiline_answer_only(self):
+        """When LLM returns two answer lines, pick the first one."""
+        raw = (
+            '{"answer": "First answer"}\n'
+            '{"answer": "Second answer"}'
+        )
+        result = parse_structured_response(raw)
+        assert result["answer"] == "First answer"
+
+    def test_multiline_needs_data_after_answer(self):
+        """needs_data is preferred even when it appears after an answer line."""
+        raw = (
+            '{"answer": "Done."}\n'
+            '{"needs_data": true, "tool_call": {"tool": "get_xl_range_as_csv", "args": {}}}'
+        )
+        result = parse_structured_response(raw)
+        assert result["needs_data"] is True
+
 
 # ---- build_cell_updates ----
 
@@ -424,6 +452,13 @@ class TestBuildSystemPrompt:
         prompt = build_system_prompt([])
         assert "columnHeaders" in prompt
         assert "column-letter markers" in prompt
+
+    def test_sort_example_present(self):
+        prompt = build_system_prompt([])
+        assert "Sort example" in prompt
+        assert "never hardcode" in prompt
+        assert "headers.indexOf" in prompt
+        assert "Column not found" in prompt
 
 
 # ---- build_prompt_payload ----

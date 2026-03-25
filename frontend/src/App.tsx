@@ -577,6 +577,7 @@ export function App() {
 
       // Up to MAX_TOOL_ROUNDS of tool-call round-trips
       const MAX_TOOL_ROUNDS = 3;
+      let loopExhausted = false;
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const roundResult = await streamRound(
           payload,
@@ -610,6 +611,50 @@ export function App() {
           toolResults,
           messages: messagesRef.current
         };
+
+        if (round === MAX_TOOL_ROUNDS - 1) loopExhausted = true;
+      }
+
+      // Send orphaned tool results back so the LLM can produce a final answer
+      if (loopExhausted) {
+        const finalRound = await streamRound(
+          payload,
+          appendMessage,
+          appendMessageDelta,
+          finalizeMessage,
+          onStatus,
+          onStep
+        );
+
+        allCellUpdates = allCellUpdates.concat(finalRound.cellUpdates);
+        allFormatUpdates = allFormatUpdates.concat(finalRound.formatUpdates);
+        allChartInserts = allChartInserts.concat(finalRound.chartInserts);
+        allPivotTableInserts = allPivotTableInserts.concat(finalRound.pivotTableInserts);
+        if (finalRound.telemetry) {
+          pendingTelemetry = finalRound.telemetry;
+        }
+
+        // If STILL no visible assistant message for this turn, show fallback
+        const hasVisibleMessage = messagesRef.current.some(
+          (msg) =>
+            msg.role === "assistant" &&
+            (msg.kind === "final" || msg.kind === "message") &&
+            msg.createdAt > userMessage.createdAt
+        );
+        if (!hasVisibleMessage) {
+          const fallback: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            kind: "message",
+            content: "Done.",
+            createdAt: new Date().toISOString()
+          };
+          setMessages((prev) => {
+            const next = [...prev, fallback];
+            messagesRef.current = next;
+            return next;
+          });
+        }
       }
 
       // Apply all accumulated Excel mutations after stream completes

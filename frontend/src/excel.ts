@@ -569,6 +569,7 @@ export async function executeXlOfficeJs(code: string): Promise<unknown> {
   }
   return Excel.run(async (context) => {
     try {
+      console.debug("[executeXlOfficeJs] Running code:", code.slice(0, 200));
       // eslint-disable-next-line no-new-func
       const fn = new Function(
         "context",
@@ -577,8 +578,14 @@ export async function executeXlOfficeJs(code: string): Promise<unknown> {
       );
       const result = await fn(context, Excel);
       await context.sync();
+      if (result === undefined || result === null) {
+        console.debug("[executeXlOfficeJs] Code returned void — reporting success");
+        return { success: true, message: "Code executed successfully." };
+      }
+      console.debug("[executeXlOfficeJs] Code returned:", result);
       return result;
     } catch (err) {
+      console.warn("[executeXlOfficeJs] Code threw:", err);
       return { error: String(err) };
     }
   });

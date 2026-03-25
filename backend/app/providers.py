@@ -126,8 +126,23 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "regex?: false, matchEntireCell?: false}\n"
         "- get_all_xl_objects: List charts/tables/pivot tables. "
         "Args: {sheetName?: \"Sheet1\", objectType?: \"chart\"|\"table\"|\"pivot\"}\n"
-        "- execute_xl_office_js: Run Office.js code snippet for specialized reads. "
-        "Args: {code: \"...\"}\n\n",
+        "- execute_xl_office_js: Run Office.js code snippet (reads, sorts, filters, "
+        "formatting, and other mutations). The code runs inside Excel.run() — "
+        "`context` (RequestContext) and `Excel` are already available. "
+        "Do NOT wrap your code in Excel.run(); use `context` directly. "
+        "Args: {code: \"...\"}\n"
+        "  Sort example (ALWAYS read headers to find column indexes — never hardcode them):\n"
+        "  const sheet = context.workbook.worksheets.getItem('SheetName');\n"
+        "  const used = sheet.getUsedRange();\n"
+        "  const headerRow = used.getRow(0); headerRow.load('values');\n"
+        "  used.load(['rowCount','columnCount']); await context.sync();\n"
+        "  const headers = headerRow.values[0].map(h => String(h).trim());\n"
+        "  const col = (name) => { const i = headers.indexOf(name); "
+        "if (i === -1) throw new Error('Column not found: ' + name); return i; };\n"
+        "  const data = sheet.getRangeByIndexes(1, 0, used.rowCount - 1, used.columnCount);\n"
+        "  data.sort.apply([{ key: col('ColA'), ascending: true }, "
+        "{ key: col('ColB'), ascending: false }]);\n"
+        "  await context.sync();\n\n",
     ]
 
     if mcp_tools:
@@ -167,7 +182,10 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "get_xl_cell_ranges for formula/format inspection\n"
         "- For large sheets (> 200 rows), use offset pagination or xl_search_data first\n"
         "- Use MCP tools only when they provide relevant external data for the query. "
-        "Do NOT use tools unless they directly help answer the user's question.\n\n"
+        "Do NOT use tools unless they directly help answer the user's question.\n"
+        "- After a tool returns a success result (including {\"success\": true}), "
+        "produce a final answer confirming the operation. Do NOT re-call the "
+        "same tool — the operation already completed.\n\n"
     )
 
     option_b = (
@@ -205,6 +223,13 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "specifies where. Do NOT overwrite existing cell values. Check active_sheet_preview to "
         "identify the used range and place output beyond it. For charts, omit topLeftCell and "
         "the system will auto-position in empty space.\n"
+        "HEADER ROW RULE: The first row of data is almost always a header row — verify "
+        "by checking columnHeaders in workbook_metadata and the first data row in "
+        "active_sheet_preview. When sorting, reordering, or rearranging rows, NEVER "
+        "include the header row in the operation. Keep it fixed in row 1 and only "
+        "sort/reorder rows 2 onwards. Always include the original header row unchanged "
+        "at the top of your cell_updates. Only modify the header row if the user "
+        "explicitly asks to change headers.\n"
         "RULES FOR FORMAT UPDATES: Only include when user EXPLICITLY requests formatting. "
         "Each format update has: `address` (A1 notation with sheet), and any combination of: "
         "`fillColor` (hex like '#4472C4'), `fontColor` (hex like '#FFFFFF'), `bold` (true/false), "
@@ -904,7 +929,27 @@ def parse_structured_response(content: Any) -> Dict[str, Any]:
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            logger.warning("LLM returned non-JSON output: %s", content)
+            pass
+        # LLM may have returned multiple JSON objects on separate lines
+        # (e.g. a needs_data tool call followed by a pre-emptive answer).
+        # Parse line-by-line; prefer a needs_data tool call if present.
+        first_parsed: Optional[Dict[str, Any]] = None
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                if obj.get("needs_data") and obj.get("tool_call"):
+                    return obj
+                if first_parsed is None:
+                    first_parsed = obj
+        if first_parsed is not None:
+            return first_parsed
+        logger.warning("LLM returned non-JSON output: %s", content)
     return {
         "answer": content if isinstance(content, str) else "No answer produced.",
         "cell_updates": [],
