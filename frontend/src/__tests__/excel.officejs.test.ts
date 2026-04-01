@@ -10,6 +10,7 @@ import { excelRun } from "../test/officeMock";
 import {
   getWorkbookMetadata,
   getUserContext,
+  getCurrentSelection,
   getLightweightSheetPreview,
   initPreviewCache,
   resetPreviewCache,
@@ -199,7 +200,31 @@ describe("getWorkbookMetadata", () => {
 });
 
 describe("getUserContext", () => {
-  it("returns active sheet and selection", async () => {
+  it("returns active sheet and non-contiguous selection via getSelectedRanges", async () => {
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          worksheets: {
+            getActiveWorksheet: () => ({
+              name: "Portfolio",
+              load: vi.fn(),
+            }),
+          },
+          getSelectedRanges: () => ({
+            address: "Portfolio!A1:A13, Portfolio!G1:G13",
+            load: vi.fn(),
+          }),
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    const ctx = await getUserContext();
+    expect(ctx.currentActiveSheetName).toBe("Portfolio");
+    expect(ctx.selectedRanges).toBe("Portfolio!A1:A13, Portfolio!G1:G13");
+  });
+
+  it("falls back to getSelectedRange when getSelectedRanges throws", async () => {
     excelRun.mockImplementation(async (cb: any) => {
       return cb({
         workbook: {
@@ -208,6 +233,9 @@ describe("getUserContext", () => {
               name: "Sales",
               load: vi.fn(),
             }),
+          },
+          getSelectedRanges: () => {
+            throw new Error("API not supported");
           },
           getSelectedRange: () => ({
             address: "Sales!A1:B5",
@@ -234,6 +262,71 @@ describe("getUserContext", () => {
     const ctx = await getUserContext();
     expect(ctx.currentActiveSheetName).toBe("");
     expect(ctx.selectedRanges).toBe("");
+  });
+});
+
+describe("getCurrentSelection", () => {
+  it("returns multiple CellSelection entries for non-contiguous ranges", async () => {
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          getSelectedRanges: () => ({
+            areas: {
+              items: [
+                {
+                  address: "Portfolio!A1:A13",
+                  values: [["Ticker"], ["AAPL"], ["MSFT"]],
+                  worksheet: { name: "Portfolio", load: vi.fn() },
+                },
+                {
+                  address: "Portfolio!G1:G13",
+                  values: [["Market Value"], [150000], [200000]],
+                  worksheet: { name: "Portfolio", load: vi.fn() },
+                },
+              ],
+            },
+            load: vi.fn(),
+          }),
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    const result = await getCurrentSelection();
+    expect(result).toHaveLength(2);
+    expect(result[0].address).toBe("Portfolio!A1:A13");
+    expect(result[0].worksheet).toBe("Portfolio");
+    expect(result[1].address).toBe("Portfolio!G1:G13");
+  });
+
+  it("falls back to getSelectedRange for single selection", async () => {
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          getSelectedRanges: () => {
+            throw new Error("API not supported");
+          },
+          getSelectedRange: () => ({
+            address: "Sheet1!A1:B5",
+            values: [[1, 2], [3, 4]],
+            load: vi.fn(),
+            worksheet: { name: "Sheet1", load: vi.fn() },
+          }),
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    const result = await getCurrentSelection();
+    expect(result).toHaveLength(1);
+    expect(result[0].address).toBe("Sheet1!A1:B5");
+    expect(result[0].worksheet).toBe("Sheet1");
+  });
+
+  it("returns empty when Office unavailable", async () => {
+    (globalThis as any).Office.context = null;
+    const result = await getCurrentSelection();
+    expect(result).toEqual([]);
   });
 });
 
@@ -1152,5 +1245,70 @@ describe("insertCharts — auto-positioning", () => {
     }]);
 
     expect(setPositionFn).toHaveBeenCalled();
+  });
+});
+
+describe("insertCharts — non-contiguous sheet-prefixed ranges", () => {
+  it("creates chart with value range and sets category axis for non-contiguous sourceAddress", async () => {
+    const chartsAddFn = vi.fn();
+    const setXAxisValuesFn = vi.fn();
+    const getRangeFn = vi.fn().mockImplementation((addr: string) => ({
+      rowCount: 13,
+      load: vi.fn(),
+      getOffsetRange: () => ({
+        getResizedRange: () => ({ _addr: addr + "_data" }),
+      }),
+    }));
+
+    chartsAddFn.mockReturnValue({
+      name: null,
+      title: { text: "", visible: false },
+      axes: {
+        categoryAxis: { title: { text: "", visible: false } },
+        valueAxis: { title: { text: "", visible: false } },
+      },
+      setPosition: vi.fn(),
+      series: {
+        count: 1,
+        load: vi.fn(),
+        getItemAt: () => ({
+          setXAxisValues: setXAxisValuesFn,
+        }),
+      },
+    });
+
+    excelRun.mockImplementation(async (cb: any) => {
+      return cb({
+        workbook: {
+          worksheets: {
+            getActiveWorksheet: () => ({}),
+            getItem: () => ({
+              getRange: getRangeFn,
+              getUsedRangeOrNullObject: () => ({
+                isNullObject: false,
+                rowIndex: 0,
+                rowCount: 13,
+                load: vi.fn(),
+              }),
+              getCell: (row: number, col: number) => ({ row, col }),
+              charts: { add: chartsAddFn },
+            }),
+          },
+        },
+        sync: vi.fn(),
+      });
+    });
+
+    await insertCharts([{
+      chartType: "BarClustered",
+      sourceAddress: "Portfolio!A1:A13,Portfolio!G1:G13",
+      title: "Test Chart",
+    }]);
+
+    // Chart created with value range (second part), not RangeAreas
+    expect(chartsAddFn).toHaveBeenCalled();
+    expect(getRangeFn).toHaveBeenCalledWith("G1:G13");
+    // Category axis set from first range (minus header)
+    expect(setXAxisValuesFn).toHaveBeenCalled();
   });
 });

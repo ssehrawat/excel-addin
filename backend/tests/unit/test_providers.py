@@ -224,6 +224,26 @@ class TestBuildChartInserts:
     def test_none_input(self):
         assert build_chart_inserts(None) == []
 
+    def test_single_cell_source_warns(self, caplog):
+        """A single-cell sourceAddress logs a warning but still creates the insert."""
+        raw = [{"chartType": "BarClustered", "sourceAddress": "Sheet1!B1:B1"}]
+        inserts = build_chart_inserts(raw)
+        assert len(inserts) == 1
+        assert "single cell" in caplog.text.lower()
+
+    def test_single_cell_no_colon_warns(self, caplog):
+        """A sourceAddress without a colon (e.g. 'A1') also warns."""
+        raw = [{"chartType": "line", "sourceAddress": "A1"}]
+        inserts = build_chart_inserts(raw)
+        assert len(inserts) == 1
+        assert "single cell" in caplog.text.lower()
+
+    def test_normal_range_no_warning(self, caplog):
+        """A proper multi-cell range does not trigger the single-cell warning."""
+        raw = [{"chartType": "line", "sourceAddress": "A1:G13"}]
+        build_chart_inserts(raw)
+        assert "single cell" not in caplog.text.lower()
+
 
 # ---- build_format_updates ----
 
@@ -459,6 +479,17 @@ class TestBuildSystemPrompt:
         assert "never hardcode" in prompt
         assert "headers.indexOf" in prompt
         assert "Column not found" in prompt
+
+    def test_chart_creation_rule_present(self):
+        prompt = build_system_prompt([])
+        assert "CHART CREATION RULE" in prompt
+        assert "ALWAYS create new charts via chart_inserts" in prompt
+        assert "NEVER via execute_xl_office_js" in prompt
+
+    def test_chart_sorting_rule_present(self):
+        prompt = build_system_prompt([])
+        assert "CHART SORTING RULE" in prompt
+        assert "do NOT sort the actual sheet data" in prompt
 
 
 # ---- build_prompt_payload ----

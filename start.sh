@@ -166,11 +166,30 @@ fi
 BACKEND_PID=""
 FRONTEND_PID=""
 
+# Kill a process and its entire tree. Uses PowerShell on Windows (more
+# reliable than POSIX kill for node/python child processes), falls back
+# to plain kill elsewhere.
+kill_tree() {
+  local pid="$1"
+  if command -v powershell &>/dev/null; then
+    powershell -NoProfile -Command "
+      function Kill-Tree(\$id) {
+        Get-CimInstance Win32_Process | Where-Object { \$_.ParentProcessId -eq \$id } |
+          ForEach-Object { Kill-Tree \$_.ProcessId }
+        Stop-Process -Id \$id -Force -ErrorAction SilentlyContinue
+      }
+      Kill-Tree $pid
+    " 2>/dev/null
+  else
+    kill "$pid" 2>/dev/null
+  fi
+}
+
 cleanup() {
   echo ""
   info "Shutting down..."
-  [[ -n "$BACKEND_PID" ]]  && kill "$BACKEND_PID"  2>/dev/null
-  [[ -n "$FRONTEND_PID" ]] && kill "$FRONTEND_PID" 2>/dev/null
+  [[ -n "$BACKEND_PID" ]]  && kill_tree "$BACKEND_PID"
+  [[ -n "$FRONTEND_PID" ]] && kill_tree "$FRONTEND_PID"
   wait 2>/dev/null
   info "Stopped."
 }

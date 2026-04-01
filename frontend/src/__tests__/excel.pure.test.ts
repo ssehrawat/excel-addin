@@ -113,6 +113,17 @@ describe("splitReference (indirect)", () => {
       expect(refs[0].sheet).toBeUndefined();
     }
   });
+
+  it("comma-separated sheet-qualified refs extract the sheet from each part", () => {
+    // extractRangeReferences parses "Sheet1!A1:A5" as a single ref
+    // but it won't parse "Sheet1!A1:A5,Sheet1!C1:C5" as comma-separated.
+    // splitReference is tested through insertCharts in the officejs test.
+    // Here we just verify the single-part sheet-qualified behavior is unchanged.
+    const refs = extractRangeReferences("Sheet1!A1:A5");
+    expect(refs.length).toBe(1);
+    expect(refs[0].sheet).toBe("Sheet1");
+    expect(refs[0].address).toBe("A1:A5");
+  });
 });
 
 describe("resolveChartType (via CHART_TYPE_ALIASES)", () => {

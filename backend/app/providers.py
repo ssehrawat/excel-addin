@@ -240,6 +240,15 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "as sourceAddress. For non-contiguous selections, use comma-separated format "
         "(e.g. 'A1:A13,G1:G13'). Do NOT expand into a single contiguous block that includes "
         "unwanted columns.\n"
+        "CHART CREATION RULE: ALWAYS create new charts via chart_inserts (Option A), "
+        "NEVER via execute_xl_office_js. Only use execute_xl_office_js for MODIFYING "
+        "existing charts (changing titles, legend, formatting, etc.).\n"
+        "CHART SORTING RULE: When the user asks to 'sort' a chart (e.g. 'sort bars from "
+        "highest to lowest'), do NOT sort the actual sheet data. The user wants the chart "
+        "visual order changed, not the spreadsheet reordered. Instead, return chart_inserts "
+        "with the original sourceAddress — Excel will display data in the source row order. "
+        "If the user explicitly asks to sort the sheet data itself (not in the context of a "
+        "chart), only then use execute_xl_office_js with the sort pattern.\n"
         "RULES FOR CHART INSERTS: Only include when user EXPLICITLY requests a chart. "
         "Every chart insert MUST include `chartType` (Excel.ChartType), `sourceAddress`, "
         "and a descriptive `title`, plus `xAxisTitle` and `yAxisTitle` for the axes. "
@@ -1137,6 +1146,15 @@ def build_chart_inserts(raw_inserts: Any) -> List[ChartInsert]:
                     chart_type_raw,
                 )
             continue
+        # Warn when the LLM returns a single-cell sourceAddress — charts need
+        # at least a header row + data rows to render meaningful content.
+        _bare = source_address.split("!")[-1] if "!" in source_address else source_address
+        if ":" not in _bare or _bare.split(":")[0] == _bare.split(":")[1]:
+            logger.warning(
+                "Chart sourceAddress appears to be a single cell (%s); "
+                "chart may not render correctly.",
+                source_address,
+            )
         source_worksheet = candidate.get("source_worksheet") or candidate.get(
             "sourceWorksheet"
         )

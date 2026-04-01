@@ -51,6 +51,24 @@ const splitReference = (
   if (!reference.includes("!")) {
     return { rangeAddress: reference };
   }
+  // Handle comma-separated ranges where each part may have a sheet prefix
+  // e.g. "Portfolio!A1:A13,Portfolio!G1:G13" → { sheetName: "Portfolio", rangeAddress: "A1:A13,G1:G13" }
+  if (reference.includes(",")) {
+    const parts = reference.split(",");
+    const parsed = parts.map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed.includes("!")) {
+        return { sheetName: undefined, range: trimmed };
+      }
+      const segs = trimmed.split("!");
+      const range = segs.pop() ?? trimmed;
+      const sheet = normalizeSheetName(segs.join("!"));
+      return { sheetName: sheet, range };
+    });
+    const sheetName = parsed.find((p) => p.sheetName)?.sheetName;
+    const rangeAddress = parsed.map((p) => p.range).join(",");
+    return { sheetName, rangeAddress };
+  }
   const segments = reference.split("!");
   const rangeAddress = segments.pop() ?? reference;
   const sheetName = normalizeSheetName(segments.join("!"));
@@ -187,9 +205,12 @@ export async function getWorkbookMetadata(): Promise<WorkbookMetadata> {
 
 /**
  * Collect fresh per-request context: the active sheet name and the current
- * selection address string.
+ * selection address string.  Supports non-contiguous selections (Ctrl+click)
+ * via {@link https://learn.microsoft.com/en-us/javascript/api/excel/excel.workbook#excel-excel-workbook-getselectedranges-member(1) getSelectedRanges}
+ * (ExcelApi 1.9+), falling back to {@link Excel.Workbook.getSelectedRange}
+ * for older hosts.
  *
- * @returns UserContext with active sheet name and selected range address.
+ * @returns UserContext with active sheet name and selected range address(es).
  */
 export async function getUserContext(): Promise<UserContext> {
   if (!Office.context || Office.context.host !== Office.HostType.Excel) {
@@ -199,12 +220,25 @@ export async function getUserContext(): Promise<UserContext> {
     return await Excel.run(async (context) => {
       const activeSheet = context.workbook.worksheets.getActiveWorksheet();
       activeSheet.load("name");
-      const selection = context.workbook.getSelectedRange();
-      selection.load("address");
-      await context.sync();
+
+      // Try getSelectedRanges() first — handles non-contiguous selections
+      let selectedAddress: string;
+      try {
+        const areas = (context.workbook as any).getSelectedRanges();
+        areas.load("address");
+        await context.sync();
+        selectedAddress = areas.address;
+      } catch {
+        // Fallback for hosts without ExcelApi 1.9+
+        const selection = context.workbook.getSelectedRange();
+        selection.load("address");
+        await context.sync();
+        selectedAddress = selection.address;
+      }
+
       return {
         currentActiveSheetName: activeSheet.name,
-        selectedRanges: selection.address
+        selectedRanges: selectedAddress
       };
     });
   } catch (error) {
@@ -665,18 +699,41 @@ export async function getCurrentSelection(): Promise<CellSelection[]> {
 
   try {
     return await Excel.run(async (context) => {
-      const range = context.workbook.getSelectedRange();
-      range.load(["address", "values"]);
-      const worksheet = range.worksheet;
-      worksheet.load("name");
-      await context.sync();
-      return [
-        {
-          address: range.address,
-          values: range.values as (string | number | boolean | null)[][],
-          worksheet: worksheet.name
+      // Try getSelectedRanges() first — handles non-contiguous selections
+      try {
+        const areas = (context.workbook as any).getSelectedRanges();
+        areas.load("areas/items/address");
+        areas.load("areas/items/values");
+        await context.sync();
+
+        const results: CellSelection[] = [];
+        for (let i = 0; i < areas.areas.items.length; i++) {
+          const area = areas.areas.items[i];
+          const ws = area.worksheet;
+          ws.load("name");
+          await context.sync();
+          results.push({
+            address: area.address,
+            values: area.values as (string | number | boolean | null)[][],
+            worksheet: ws.name
+          });
         }
-      ];
+        return results;
+      } catch {
+        // Fallback for hosts without ExcelApi 1.9+
+        const range = context.workbook.getSelectedRange();
+        range.load(["address", "values"]);
+        const worksheet = range.worksheet;
+        worksheet.load("name");
+        await context.sync();
+        return [
+          {
+            address: range.address,
+            values: range.values as (string | number | boolean | null)[][],
+            worksheet: worksheet.name
+          }
+        ];
+      }
     });
   } catch (error) {
     console.error("Unable to read selected range", error);
@@ -814,19 +871,6 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
           sourceSheetName != null
             ? context.workbook.worksheets.getItem(sourceSheetName)
             : context.workbook.worksheets.getActiveWorksheet();
-        // Handle non-contiguous ranges (comma-separated like "A1:A13,G1:G13")
-        let sourceData: any;
-        if (rangeAddress.includes(",")) {
-          try {
-            sourceData = (sourceWorksheet as any).getRanges(rangeAddress);
-          } catch {
-            // Fallback for older API: use bounding-box single range
-            sourceData = sourceWorksheet.getRange(rangeAddress.split(",")[0]);
-          }
-        } else {
-          sourceData = sourceWorksheet.getRange(rangeAddress);
-        }
-
         const destinationSheetName = normalizeSheetName(
           insert.destinationWorksheet ?? undefined
         );
@@ -855,11 +899,67 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
             seriesBy = Excel.ChartSeriesBy.auto;
         }
 
-        const chart = destinationWorksheet.charts.add(
-          chartType,
-          sourceData,
-          seriesBy
-        );
+        // Handle non-contiguous ranges (comma-separated like "A1:A13,G1:G13")
+        // charts.add() only accepts Range, not RangeAreas, so we build
+        // the chart with the value range and set categories manually.
+        let chart: Excel.Chart;
+        if (rangeAddress.includes(",")) {
+          const parts = rangeAddress.split(",").map((p) => p.trim());
+          // First part = category labels, remaining parts = value series
+          const categoryFullRange = sourceWorksheet.getRange(parts[0]);
+          categoryFullRange.load("rowCount");
+          await context.sync();
+
+          const valueRange = sourceWorksheet.getRange(parts[1]);
+          chart = destinationWorksheet.charts.add(
+            chartType,
+            valueRange,
+            Excel.ChartSeriesBy.columns
+          );
+
+          // Set category axis labels (skip header row)
+          const catRows = categoryFullRange.rowCount;
+          if (catRows > 1) {
+            const categoryDataRange = categoryFullRange
+              .getOffsetRange(1, 0)
+              .getResizedRange(-(1), 0);
+            chart.series.load("count");
+            await context.sync();
+            for (let s = 0; s < chart.series.count; s++) {
+              chart.series.getItemAt(s).setXAxisValues(categoryDataRange);
+            }
+          }
+
+          // Add extra value series if more than 2 ranges provided
+          for (let p = 2; p < parts.length; p++) {
+            const extraRange = sourceWorksheet.getRange(parts[p]);
+            extraRange.load("values");
+            await context.sync();
+            const headerVal = extraRange.values[0]?.[0];
+            const seriesName =
+              typeof headerVal === "string" && headerVal
+                ? headerVal
+                : `Series ${p}`;
+            const newSeries = chart.series.add(seriesName);
+            const dataRange = extraRange
+              .getOffsetRange(1, 0)
+              .getResizedRange(-1, 0);
+            newSeries.setValues(dataRange);
+            if (catRows > 1) {
+              const categoryDataRange = categoryFullRange
+                .getOffsetRange(1, 0)
+                .getResizedRange(-1, 0);
+              newSeries.setXAxisValues(categoryDataRange);
+            }
+          }
+        } else {
+          const sourceData = sourceWorksheet.getRange(rangeAddress);
+          chart = destinationWorksheet.charts.add(
+            chartType,
+            sourceData,
+            seriesBy
+          );
+        }
         if (insert.name) {
           chart.name = insert.name;
         }
