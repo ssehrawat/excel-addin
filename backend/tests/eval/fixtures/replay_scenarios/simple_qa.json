@@ -1,0 +1,13 @@
+{
+  "name": "simple_qa",
+  "description": "Simple Q&A with no mutations — tests basic response parsing",
+  "prompt": "What is the sum of values in column B?",
+  "provider": "openai",
+  "workbook": {
+    "sheets": {
+      "Sheet1": { "A1": "Item", "B1": "Value", "A2": "X", "B2": 10, "A3": "Y", "B3": 20 }
+    },
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1:B3"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "pivot_table_new_sheet",
+  "description": "Create a pivot table on a new destination worksheet that does not yet exist",
+  "initialWorkbook": {
+    "sheets": [{ "name": "RawData", "cells": { "A1": "Category", "B1": "Sales", "A2": "A", "B2": 100, "A3": "B", "B3": 200 } }],
+    "activeSheet": "RawData",
+    "selectedRange": "A1:B3"
+  },
+  "mutations": [
+    {
+      "type": "pivot_table_inserts",
+      "payload": [{
+        "name": "PivotOnNewSheet",
+        "sourceAddress": "A1:B3",
+        "destinationWorksheet": "PivotSheet",
+        "destinationAddress": "A1",
+        "rows": ["Category"],
+        "values": [{ "name": "Sales", "summarizeBy": "sum" }]
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "sheetExists", "sheet": "PivotSheet", "expected": true },
+    { "type": "pivotCount", "sheet": "PivotSheet", "expected": 1 }
+  ]
+}

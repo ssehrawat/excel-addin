@@ -1,0 +1,258 @@
+{
+  "scenario": "demo_s8_cross_sheet",
+  "prompt": "Compare my portfolio sector weights on the \"Sector Allocation\" sheet with the targets. Which sectors need rebalancing and by how much?",
+  "provider": "openai",
+  "recorded_at": "2026-04-02T23:15:43.247684+00:00",
+  "events": [
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "message_start",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "role": "assistant",
+        "kind": "final",
+        "content": "",
+        "createdAt": "2026-04-02T23:15:46.349672+00:00"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "I compared the portfolio\u2019s actual sector weights"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": " against the target weights on the Sector Alloca"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "tion sheet. Here\u2019s what needs rebalancing:\n\n- Te"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "chnology: current 47.5% vs target 30.0% \u2192 overwe"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "ight by 17.5 percentage points\n- Financials: cur"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "rent 15.9% vs target 15.0% \u2192 overweight by 0.9 p"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "ercentage points\n- Healthcare: current 12.5% vs "
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "target 15.0% \u2192 underweight by 2.5 percentage poi"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "nts\n- Energy: current 6.0% vs target 7.5% \u2192 unde"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "rweight by 1.5 percentage points\n- Consumer Stap"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "les: current 6.7% vs target 10.0% \u2192 underweight "
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "by 3.3 percentage points\n- Consumer Disc.: curre"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "nt 4.4% vs target 5.0% \u2192 underweight by 0.6 perc"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "entage points\n- Utilities: current 2.6% vs targe"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "t 5.0% \u2192 underweight by 2.4 percentage points\n- "
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "Real Estate: current 4.3% vs target 5.0% \u2192 under"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "weight by 0.7 percentage points\n\nSectors that ar"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "e already close enough to target or only slightl"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "y off:\n- Financials is only modestly overweight\n"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "- The largest rebalance need is Technology, whic"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "h should be reduced materially\n\nIf you want, I c"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "an also turn this into trade amounts or share co"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "delta": "unts based on current market values."
+      }
+    },
+    {
+      "type": "message_done",
+      "payload": {
+        "id": "fdfdc473870040ca8d2856c4968aac7c",
+        "role": "assistant",
+        "kind": "final",
+        "content": "I compared the portfolio\u2019s actual sector weights against the target weights on the Sector Allocation sheet. Here\u2019s what needs rebalancing:\n\n- Technology: current 47.5% vs target 30.0% \u2192 overweight by 17.5 percentage points\n- Financials: current 15.9% vs target 15.0% \u2192 overweight by 0.9 percentage points\n- Healthcare: current 12.5% vs target 15.0% \u2192 underweight by 2.5 percentage points\n- Energy: current 6.0% vs target 7.5% \u2192 underweight by 1.5 percentage points\n- Consumer Staples: current 6.7% vs target 10.0% \u2192 underweight by 3.3 percentage points\n- Consumer Disc.: current 4.4% vs target 5.0% \u2192 underweight by 0.6 percentage points\n- Utilities: current 2.6% vs target 5.0% \u2192 underweight by 2.4 percentage points\n- Real Estate: current 4.3% vs target 5.0% \u2192 underweight by 0.7 percentage points\n\nSectors that are already close enough to target or only slightly off:\n- Financials is only modestly overweight\n- The largest rebalance need is Technology, which should be reduced materially\n\nIf you want, I can also turn this into trade amounts or share counts based on current market values.",
+        "createdAt": "2026-04-02T23:15:46.349672+00:00"
+      }
+    },
+    {
+      "type": "telemetry",
+      "payload": {
+        "latency_ms": 5672.887086868286,
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "tokens_prompt": null,
+        "tokens_completion": null,
+        "raw": {
+          "openai_response": {
+            "token_usage": {
+              "completion_tokens": 342,
+              "prompt_tokens": 4061,
+              "total_tokens": 4403,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": 0,
+                "cached_tokens": 3840
+              }
+            },
+            "model_name": "gpt-5.4-mini-2026-03-17",
+            "system_fingerprint": null,
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      }
+    },
+    {
+      "type": "done"
+    }
+  ],
+  "tool_rounds": []
+}

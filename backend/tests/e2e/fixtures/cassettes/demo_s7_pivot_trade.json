@@ -1,0 +1,133 @@
+{
+  "scenario": "demo_s7_pivot_trade",
+  "prompt": "Create a pivot table summarizing total trade volume and net amount by ticker and strategy.",
+  "provider": "openai",
+  "recorded_at": "2026-04-02T23:15:40.095391+00:00",
+  "events": [
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "message_start",
+      "payload": {
+        "id": "09643d46b6ed47f4b48414171d2b0f4d",
+        "role": "assistant",
+        "kind": "final",
+        "content": "",
+        "createdAt": "2026-04-02T23:15:42.328447+00:00"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "09643d46b6ed47f4b48414171d2b0f4d",
+        "delta": "Done."
+      }
+    },
+    {
+      "type": "message_done",
+      "payload": {
+        "id": "09643d46b6ed47f4b48414171d2b0f4d",
+        "role": "assistant",
+        "kind": "final",
+        "content": "Done.",
+        "createdAt": "2026-04-02T23:15:42.328447+00:00"
+      }
+    },
+    {
+      "type": "pivot_table_inserts",
+      "payload": [
+        {
+          "name": "TradeSummaryByTickerStrategy",
+          "sourceAddress": "Trade Log!A1:I31",
+          "sourceWorksheet": null,
+          "destinationAddress": null,
+          "destinationWorksheet": null,
+          "rows": [
+            "Ticker"
+          ],
+          "columns": [
+            "Strategy"
+          ],
+          "values": [
+            {
+              "name": "Quantity",
+              "summarizeBy": "sum"
+            },
+            {
+              "name": "Net Amount",
+              "summarizeBy": "sum"
+            }
+          ],
+          "filters": []
+        }
+      ]
+    },
+    {
+      "type": "telemetry",
+      "payload": {
+        "latency_ms": 3125.291585922241,
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "tokens_prompt": null,
+        "tokens_completion": null,
+        "raw": {
+          "openai_response": {
+            "token_usage": {
+              "completion_tokens": 70,
+              "prompt_tokens": 5532,
+              "total_tokens": 5602,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": 0,
+                "cached_tokens": 5376
+              }
+            },
+            "model_name": "gpt-5.4-mini-2026-03-17",
+            "system_fingerprint": null,
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      }
+    },
+    {
+      "type": "done"
+    }
+  ],
+  "tool_rounds": []
+}

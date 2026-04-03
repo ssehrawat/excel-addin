@@ -1,0 +1,22 @@
+{
+  "name": "cell_update_cross_sheet",
+  "description": "Write to Sheet2 while Sheet1 is active, using the worksheet field",
+  "initialWorkbook": {
+    "sheets": [
+      { "name": "Sheet1", "cells": { "A1": "Active" } },
+      { "name": "Sheet2", "cells": {} }
+    ],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "A1", "values": [["Written to Sheet2"]], "mode": "replace", "worksheet": "Sheet2" }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A1", "expected": "Active" },
+    { "type": "cellValue", "sheet": "Sheet2", "address": "A1", "expected": "Written to Sheet2" }
+  ]
+}

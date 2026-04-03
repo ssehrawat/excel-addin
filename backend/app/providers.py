@@ -235,7 +235,23 @@ def build_system_prompt(mcp_tools: List[MCPToolEntry]) -> str:
         "`fillColor` (hex like '#4472C4'), `fontColor` (hex like '#FFFFFF'), `bold` (true/false), "
         "`italic` (true/false), `numberFormat` (Excel format string), `borderColor` (hex), "
         "`borderStyle` ('Continuous'|'Dash'|'None'|...), `borderWeight` ('Thin'|'Medium'|'Thick'). "
-        "Only include non-null fields. Example: {\"address\":\"Sheet1!A1:D1\",\"fillColor\":\"#4472C4\",\"fontColor\":\"#FFFFFF\",\"bold\":true}\n"
+        "Only include non-null fields.\n"
+        "CRITICAL — VALUE-BASED / CONDITIONAL FORMATTING: When applying different colors based "
+        "on cell values (e.g. green for 'Overweight', red for 'Underweight'), you MUST:\n"
+        "1. If cells contain FORMULAS (like =IF(...)), use get_xl_range_as_csv or "
+        "get_xl_cell_ranges to READ the actual displayed values FIRST. Do NOT guess "
+        "what a formula evaluates to — read the cells.\n"
+        "2. Emit a SEPARATE format_update for EACH cell that needs a different color. "
+        "Do NOT apply one color to the entire range — that paints every cell the same.\n"
+        "3. Match the color to each cell's ACTUAL value, not what you think it should be.\n"
+        "Example for conditional formatting on K2:K5 where K2='Overweight', K3='Neutral', "
+        "K4='Underweight', K5='Overweight':\n"
+        "  {\"address\":\"Sheet1!K2\",\"fillColor\":\"#00B050\",\"fontColor\":\"#FFFFFF\",\"bold\":true},\n"
+        "  {\"address\":\"Sheet1!K3\",\"fillColor\":\"#FFD966\",\"fontColor\":\"#000000\"},\n"
+        "  {\"address\":\"Sheet1!K4\",\"fillColor\":\"#FF0000\",\"fontColor\":\"#FFFFFF\",\"bold\":true},\n"
+        "  {\"address\":\"Sheet1!K5\",\"fillColor\":\"#00B050\",\"fontColor\":\"#FFFFFF\",\"bold\":true}\n"
+        "Uniform formatting (same style for all cells) CAN use a single range address: "
+        "{\"address\":\"Sheet1!A1:D1\",\"fillColor\":\"#4472C4\",\"fontColor\":\"#FFFFFF\",\"bold\":true}\n"
         "CHART SOURCE RULE: When the user has selected specific ranges, use those exact ranges "
         "as sourceAddress. For non-contiguous selections, use comma-separated format "
         "(e.g. 'A1:A13,G1:G13'). Do NOT expand into a single contiguous block that includes "
@@ -468,6 +484,24 @@ class MockProvider:
     requires_key = False
 
     async def generate(self, request: ChatRequest) -> ProviderResult:
+        # WHY: Tool-call keyword path for E2E pipeline testing. When the
+        # prompt contains "lookup" or "fetch data" and no tool results have
+        # been provided yet, return a tool_call_required so the headless
+        # frontend test driver can exercise the tool round-trip loop.
+        prompt_lower = request.prompt.lower()
+        if (
+            any(kw in prompt_lower for kw in ("lookup", "fetch data"))
+            and not request.tool_results
+        ):
+            return ProviderResult(
+                messages=[],
+                tool_call_required=WorkbookToolCall(
+                    id=f"tc-mock-{_message_id()}",
+                    tool="get_xl_range_as_csv",
+                    args={"sheetName": "Sheet1", "range": "A1:D10"},
+                ),
+            )
+
         selection_preview = [
             f"{sel.address} = {sel.values}" for sel in request.selection[:3]
         ]
@@ -484,13 +518,21 @@ class MockProvider:
                 )
             )
 
+        # WHY: When tool results are present (re-POST after tool call),
+        # include them in the answer so tests can verify the round-trip.
+        tool_context = ""
+        if request.tool_results:
+            tool_context = " Tool data received: " + str(
+                [tr.result for tr in request.tool_results[:2]]
+            )
+
         messages.append(
             ChatMessage(
                 id=_message_id(),
                 role=MessageRole.ASSISTANT,
                 kind=MessageKind.FINAL,
                 content=(
-                    f"(mock) Answer to: '{request.prompt}'. "
+                    f"(mock) Answer to: '{request.prompt}'.{tool_context} "
                     "Configure a real provider in the backend environment to get real answers."
                 ),
                 created_at=_timestamp(),

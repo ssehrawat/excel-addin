@@ -1,0 +1,24 @@
+{
+  "name": "pivot_table_basic",
+  "description": "Create a basic pivot table with rows and values",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Data", "cells": { "A1": "Region", "B1": "Amount", "A2": "East", "B2": 100, "A3": "West", "B3": 200, "A4": "East", "B4": 150 } }],
+    "activeSheet": "Data",
+    "selectedRange": "A1:B4"
+  },
+  "mutations": [
+    {
+      "type": "pivot_table_inserts",
+      "payload": [{
+        "name": "SalesPivot",
+        "sourceAddress": "A1:B4",
+        "rows": ["Region"],
+        "values": [{ "name": "Amount", "summarizeBy": "sum" }]
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "pivotCount", "sheet": "Data", "expected": 1 },
+    { "type": "pivotProperty", "sheet": "Data", "pivotIndex": 0, "prop": "name", "expected": "SalesPivot" }
+  ]
+}

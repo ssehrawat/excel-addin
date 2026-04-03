@@ -1,0 +1,14 @@
+{
+  "name": "demo_s7_pivot_trade",
+  "description": "Scene 7: Pivot table from Trade Log by ticker and strategy",
+  "prompt": "Create a pivot table summarizing total trade volume and net amount by ticker and strategy.",
+  "provider": "openai",
+  "activeSheet": "Trade Log",
+  "selectedRange": "Trade Log!A1:I31",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "mutation_types_present": ["pivot_table_inserts"],
+    "pivot_inserts_min_count": 1
+  }
+}

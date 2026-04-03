@@ -1,0 +1,14 @@
+{
+  "name": "demo_s2_basic_qa",
+  "description": "Scene 2: Basic Q&A about portfolio holdings — text answer only, no mutations expected",
+  "prompt": "What does this portfolio look like? Which are the top 3 holdings by market value?",
+  "provider": "openai",
+  "activeSheet": "Portfolio",
+  "selectedRange": "Portfolio!A1:J13",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "answer_mentions_any": ["NVIDIA", "NVDA", "Microsoft", "MSFT", "Apple", "AAPL"],
+    "mutation_types_present": []
+  }
+}

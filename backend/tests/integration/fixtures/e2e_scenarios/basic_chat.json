@@ -1,0 +1,13 @@
+{
+  "name": "basic_chat",
+  "description": "Simple prompt with no selection produces a text-only response",
+  "prompt": "Hello, what can you do?",
+  "provider": "mock",
+  "workbook": {
+    "sheets": {},
+    "activeSheet": "Sheet1",
+    "selectedRange": ""
+  },
+  "expectedEventTypes": ["message_start", "message_done", "telemetry", "done"],
+  "expectedToolRounds": 0
+}

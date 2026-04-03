@@ -1,0 +1,14 @@
+{
+  "name": "demo_s4_rating_column",
+  "description": "Scene 4: Add a Rating column K based on Gain % — expects cell_updates with 12+ values",
+  "prompt": "Add a column K with header \"Rating\". Rate each stock as Overweight, Neutral, or Underweight based on whether its gain % is above 20%, between 0-20%, or negative.",
+  "provider": "openai",
+  "activeSheet": "Portfolio",
+  "selectedRange": "Portfolio!A1:J13",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "mutation_types_present": ["cell_updates"],
+    "cell_updates_min_count": 1
+  }
+}

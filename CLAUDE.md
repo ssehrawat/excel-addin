@@ -157,7 +157,10 @@ When the LLM needs more data than the pre-read provides, it returns `needs_data:
 `orchestrator._summarize_tool_result()` tries to render results as a markdown table (up to 10 rows). It handles MongoDB-style extended JSON (`$date`, `$oid`, `$numberDouble`). Results are injected as `MessageKind.CONTEXT` / `MessageRole.SYSTEM` messages before the LLM call, not as separate API tool calls.
 
 ### Format Updates Schema
-System prompt includes detailed field names and types (fillColor, fontColor, bold, italic, numberFormat, borderColor, borderStyle, borderWeight). `build_format_updates()` extracts all 8 formatting fields.
+System prompt includes detailed field names and types (fillColor, fontColor, bold, italic, numberFormat, borderColor, borderStyle, borderWeight). `build_format_updates()` extracts all 8 formatting fields. For value-based / conditional formatting (different colors per cell value), the system prompt instructs the LLM to emit separate `format_update` entries per cell and to read actual cell values via tool call first when cells contain formulas.
+
+### Chart Axis Title Mapping
+In bar charts (`BarClustered`, `BarStacked`, `BarStacked100`), Excel's `categoryAxis` is vertical and `valueAxis` is horizontal — opposite of column/line charts. `insertCharts()` detects bar chart types and swaps the mapping: `xAxisTitle` → `valueAxis` (horizontal) and `yAxisTitle` → `categoryAxis` (vertical). For all other chart types, the standard mapping applies: `xAxisTitle` → `categoryAxis` (horizontal), `yAxisTitle` → `valueAxis` (vertical).
 
 ### Chart Source Address
 System prompt instructs LLM to use user's exact selected ranges. Non-contiguous ranges use comma-separated format (e.g. "A1:A13,G1:G13"). Frontend `insertCharts()` handles both single and comma-separated ranges. For non-contiguous ranges, `charts.add()` only accepts `Range` (not `RangeAreas`), so the frontend builds the chart with the **value range** (second part) as source and sets **category axis labels** from the first part via `series.setXAxisValues()`. Additional value ranges (3+ parts) are added as extra series.
@@ -194,9 +197,15 @@ The taskpane and custom function bundles are separate webpack chunks that share 
 - After each meaningful task, record the GITSHA in `enhancements.md` as a Phase Checkpoint.
 - When adding dependencies: update `requirements.txt` (backend) or `package-lock.json` (frontend).
 - `.env`, `manifest.md`, and SSL certs are gitignored.
+- NEVER mention Claude, Anthropic, or any AI tool in commit messages or Co-Authored-By lines. Commit messages should read as if written by the developer.
 
 ## Documentation
 
 - Python: Google-style docstrings (Args, Returns, Raises) for all classes and public methods.
 - TypeScript: JSDoc (`@param`, `@returns`, `@throws`) for all exported functions.
 - Inline comments should explain *why*, not *what*.
+
+## Code Documentation Standard
+- Every new file must start with a module docstring explaining purpose and key exports
+- Non-obvious decisions must include a `# WHY:` comment
+- Public functions/classes require docstrings with intent, not just parameter descriptions

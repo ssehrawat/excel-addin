@@ -1,0 +1,27 @@
+{
+  "name": "chart_single_range",
+  "description": "Create a simple chart from a contiguous range with title and axis labels",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sales", "cells": { "A1": "Month", "B1": "Revenue", "A2": "Jan", "B2": 10000, "A3": "Feb", "B3": 12000, "A4": "Mar", "B4": 15000 } }],
+    "activeSheet": "Sales",
+    "selectedRange": "A1:B4"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "columnClustered",
+        "sourceAddress": "A1:B4",
+        "title": "Monthly Revenue",
+        "xAxisTitle": "Month",
+        "yAxisTitle": "Revenue ($)",
+        "seriesBy": "columns"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Sales", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Sales", "chartIndex": 0, "prop": "chartType", "expected": "ColumnClustered" },
+    { "type": "chartProperty", "sheet": "Sales", "chartIndex": 0, "prop": "title.text", "expected": "Monthly Revenue" }
+  ]
+}

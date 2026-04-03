@@ -1,0 +1,31 @@
+{
+  "name": "demo_s5_format_ratings",
+  "description": "Scene 5: Format Rating column with conditional colors — green/red/yellow. Pre-populates column K with ratings so the LLM can see them.",
+  "prompt": "Format the Rating column K: make \"Overweight\" cells green with white bold text, \"Underweight\" red with white bold text, and \"Neutral\" yellow with black text.",
+  "provider": "openai",
+  "activeSheet": "Portfolio",
+  "selectedRange": "Portfolio!K1:K13",
+  "extraCells": {
+    "Portfolio": {
+      "K1": "Rating",
+      "K2": "Overweight",
+      "K3": "Overweight",
+      "K4": "Overweight",
+      "K5": "Underweight",
+      "K6": "Overweight",
+      "K7": "Neutral",
+      "K8": "Overweight",
+      "K9": "Overweight",
+      "K10": "Overweight",
+      "K11": "Neutral",
+      "K12": "Underweight",
+      "K13": "Neutral"
+    }
+  },
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "mutation_types_present": ["format_updates"],
+    "format_updates_min_count": 1
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "demo_cell_update_rating_column",
+  "description": "Scene 4: Add a Rating column K — Overweight/Neutral/Underweight based on Gain %",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Portfolio",
+      "cells": {
+        "A1": "Ticker", "B1": "Company", "C1": "Sector", "D1": "Shares", "E1": "Avg Cost", "F1": "Current Price", "G1": "Market Value", "H1": "Gain/Loss", "I1": "Gain %", "J1": "Weight",
+        "A2": "AAPL", "B2": "Apple Inc.", "C2": "Technology", "D2": 150, "E2": 142.5, "F2": 189.84, "G2": 28476, "H2": 7101, "I2": 0.332, "J2": 0.128,
+        "A3": "MSFT", "B3": "Microsoft Corp.", "C3": "Technology", "D3": 100, "E3": 280, "F3": 415.6, "G3": 41560, "H3": 13560, "I3": 0.484, "J3": 0.187,
+        "A4": "JPM", "B4": "JPMorgan Chase", "C4": "Financials", "D4": 80, "E4": 135.2, "F4": 196.45, "G4": 15716, "H4": 4900, "I4": 0.453, "J4": 0.071,
+        "A5": "JNJ", "B5": "Johnson & Johnson", "C5": "Healthcare", "D5": 60, "E5": 162, "F5": 155.3, "G5": 9318, "H5": -402, "I5": -0.041, "J5": 0.042,
+        "A6": "XOM", "B6": "Exxon Mobil", "C6": "Energy", "D6": 120, "E6": 85.4, "F6": 110.75, "G6": 13290, "H6": 3042, "I6": 0.296, "J6": 0.060,
+        "A7": "PG", "B7": "Procter & Gamble", "C7": "Consumer Staples", "D7": 90, "E7": 148, "F7": 165.2, "G7": 14868, "H7": 1548, "I7": 0.116, "J7": 0.067,
+        "A8": "NVDA", "B8": "NVIDIA Corp.", "C8": "Technology", "D8": 40, "E8": 450, "F8": 875.3, "G8": 35012, "H8": 17012, "I8": 0.945, "J8": 0.158,
+        "A9": "AMZN", "B9": "Amazon.com", "C9": "Consumer Disc.", "D9": 55, "E9": 128, "F9": 178.25, "G9": 9803.75, "H9": 2763.75, "I9": 0.392, "J9": 0.044,
+        "A10": "V", "B10": "Visa Inc.", "C10": "Financials", "D10": 70, "E10": 230, "F10": 278.9, "G10": 19523, "H10": 3423, "I10": 0.212, "J10": 0.088,
+        "A11": "UNH", "B11": "UnitedHealth Group", "C11": "Healthcare", "D11": 35, "E11": 480, "F11": 525.1, "G11": 18378.5, "H11": 1578.5, "I11": 0.093, "J11": 0.083,
+        "A12": "NEE", "B12": "NextEra Energy", "C12": "Utilities", "D12": 85, "E12": 72, "F12": 68.45, "G12": 5818.25, "H12": -301.75, "I12": -0.049, "J12": 0.026,
+        "A13": "AMT", "B13": "American Tower", "C13": "Real Estate", "D13": 45, "E13": 195, "F13": 210.8, "G13": 9486, "H13": 711, "I13": 0.081, "J13": 0.042
+      }
+    }],
+    "activeSheet": "Portfolio",
+    "selectedRange": "A1:J13"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{
+        "address": "K1",
+        "values": [
+          ["Rating"],
+          ["Overweight"],
+          ["Overweight"],
+          ["Overweight"],
+          ["Underweight"],
+          ["Overweight"],
+          ["Neutral"],
+          ["Overweight"],
+          ["Overweight"],
+          ["Overweight"],
+          ["Neutral"],
+          ["Underweight"],
+          ["Neutral"]
+        ],
+        "mode": "replace"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K1", "expected": "Rating" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K2", "expected": "Overweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K5", "expected": "Underweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K7", "expected": "Neutral" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K8", "expected": "Overweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K12", "expected": "Underweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K13", "expected": "Neutral" },
+    { "type": "usedRange", "sheet": "Portfolio", "expectedRows": 13, "expectedCols": 11 },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "A1", "expected": "Ticker" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "G8", "expected": 35012 }
+  ]
+}

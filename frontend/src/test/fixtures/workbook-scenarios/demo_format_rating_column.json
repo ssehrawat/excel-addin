@@ -1,0 +1,57 @@
+{
+  "name": "demo_format_rating_column",
+  "description": "Scene 5: Conditional formatting on Rating column — green/red/yellow per value",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Portfolio",
+      "cells": {
+        "A1": "Ticker", "K1": "Rating",
+        "A2": "AAPL", "K2": "Overweight",
+        "A3": "MSFT", "K3": "Overweight",
+        "A4": "JPM", "K4": "Overweight",
+        "A5": "JNJ", "K5": "Underweight",
+        "A6": "XOM", "K6": "Overweight",
+        "A7": "PG", "K7": "Neutral",
+        "A8": "NVDA", "K8": "Overweight",
+        "A9": "AMZN", "K9": "Overweight",
+        "A10": "V", "K10": "Overweight",
+        "A11": "UNH", "K11": "Neutral",
+        "A12": "NEE", "K12": "Underweight",
+        "A13": "AMT", "K13": "Neutral"
+      }
+    }],
+    "activeSheet": "Portfolio",
+    "selectedRange": "K1:K13"
+  },
+  "mutations": [
+    {
+      "type": "format_updates",
+      "payload": [
+        { "address": "K2", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K3", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K4", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K5", "fillColor": "#FF0000", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K6", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K7", "fillColor": "#FFD966", "fontColor": "#000000", "bold": false },
+        { "address": "K8", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K9", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K10", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K11", "fillColor": "#FFD966", "fontColor": "#000000", "bold": false },
+        { "address": "K12", "fillColor": "#FF0000", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K13", "fillColor": "#FFD966", "fontColor": "#000000", "bold": false }
+      ]
+    }
+  ],
+  "assertions": [
+    { "type": "format", "sheet": "Portfolio", "address": "K2", "prop": "fillColor", "expected": "#00B050" },
+    { "type": "format", "sheet": "Portfolio", "address": "K2", "prop": "fontColor", "expected": "#FFFFFF" },
+    { "type": "format", "sheet": "Portfolio", "address": "K2", "prop": "bold", "expected": true },
+    { "type": "format", "sheet": "Portfolio", "address": "K5", "prop": "fillColor", "expected": "#FF0000" },
+    { "type": "format", "sheet": "Portfolio", "address": "K5", "prop": "fontColor", "expected": "#FFFFFF" },
+    { "type": "format", "sheet": "Portfolio", "address": "K7", "prop": "fillColor", "expected": "#FFD966" },
+    { "type": "format", "sheet": "Portfolio", "address": "K7", "prop": "fontColor", "expected": "#000000" },
+    { "type": "format", "sheet": "Portfolio", "address": "K7", "prop": "bold", "expected": false },
+    { "type": "format", "sheet": "Portfolio", "address": "K12", "prop": "fillColor", "expected": "#FF0000" },
+    { "type": "format", "sheet": "Portfolio", "address": "K13", "prop": "fillColor", "expected": "#FFD966" }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "name": "demo_chart_market_value_column",
+  "description": "Scene 6: Column chart of market value by ticker from non-contiguous selection A1:A13,G1:G13",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Portfolio",
+      "cells": {
+        "A1": "Ticker", "G1": "Market Value",
+        "A2": "AAPL", "G2": 28476,
+        "A3": "MSFT", "G3": 41560,
+        "A4": "JPM", "G4": 15716,
+        "A5": "JNJ", "G5": 9318,
+        "A6": "XOM", "G6": 13290,
+        "A7": "PG", "G7": 14868,
+        "A8": "NVDA", "G8": 35012,
+        "A9": "AMZN", "G9": 9803.75,
+        "A10": "V", "G10": 19523,
+        "A11": "UNH", "G11": 18378.5,
+        "A12": "NEE", "G12": 5818.25,
+        "A13": "AMT", "G13": 9486
+      }
+    }],
+    "activeSheet": "Portfolio",
+    "selectedRange": "A1:A13,G1:G13"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "columnClustered",
+        "sourceAddress": "A1:A13,G1:G13",
+        "title": "Portfolio Holdings by Market Value",
+        "xAxisTitle": "Ticker",
+        "yAxisTitle": "Market Value ($)"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Portfolio", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Portfolio", "chartIndex": 0, "prop": "chartType", "expected": "ColumnClustered" },
+    { "type": "chartProperty", "sheet": "Portfolio", "chartIndex": 0, "prop": "title.text", "expected": "Portfolio Holdings by Market Value" },
+    { "type": "chartPositionBelowRow", "sheet": "Portfolio", "chartIndex": 0, "minRow": 12 },
+    { "type": "chartAxisTitle", "sheet": "Portfolio", "chartIndex": 0, "axis": "category", "expected": "Ticker" },
+    { "type": "chartAxisTitle", "sheet": "Portfolio", "chartIndex": 0, "axis": "value", "expected": "Market Value ($)" }
+  ]
+}

@@ -967,13 +967,38 @@ export async function insertCharts(inserts: ChartInsert[]): Promise<void> {
           chart.title.text = insert.title;
           chart.title.visible = true;
         }
-        if (insert.xAxisTitle) {
-          chart.axes.categoryAxis.title.text = insert.xAxisTitle;
-          chart.axes.categoryAxis.title.visible = true;
-        }
-        if (insert.yAxisTitle) {
-          chart.axes.valueAxis.title.text = insert.yAxisTitle;
-          chart.axes.valueAxis.title.visible = true;
+        // WHY: In bar charts (BarClustered, BarStacked, etc.) the category
+        // axis is vertical and the value axis is horizontal — the opposite
+        // of column/line/area charts. The LLM sends xAxisTitle meaning
+        // "horizontal axis" and yAxisTitle meaning "vertical axis", so for
+        // bar charts we must swap which Office.js axis object receives which
+        // title. Without this, the labels say "Ticker" on the value axis
+        // and "Market Value" on the category axis — visually backwards.
+        const barTypes = ["BarClustered", "BarStacked", "BarStacked100"];
+        const isBarChart = barTypes.some(
+          (bt) => normalizeIdentifier(bt) === normalizeIdentifier(String(chartType))
+        );
+
+        if (isBarChart) {
+          // Bar chart: categoryAxis = vertical (Y), valueAxis = horizontal (X)
+          if (insert.xAxisTitle) {
+            chart.axes.valueAxis.title.text = insert.xAxisTitle;
+            chart.axes.valueAxis.title.visible = true;
+          }
+          if (insert.yAxisTitle) {
+            chart.axes.categoryAxis.title.text = insert.yAxisTitle;
+            chart.axes.categoryAxis.title.visible = true;
+          }
+        } else {
+          // Column/line/area/etc: categoryAxis = horizontal (X), valueAxis = vertical (Y)
+          if (insert.xAxisTitle) {
+            chart.axes.categoryAxis.title.text = insert.xAxisTitle;
+            chart.axes.categoryAxis.title.visible = true;
+          }
+          if (insert.yAxisTitle) {
+            chart.axes.valueAxis.title.text = insert.yAxisTitle;
+            chart.axes.valueAxis.title.visible = true;
+          }
         }
         if (insert.topLeftCell) {
           const topLeft = destinationWorksheet.getRange(insert.topLeftCell);

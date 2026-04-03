@@ -1,0 +1,29 @@
+{
+  "name": "chart_noncontiguous_range",
+  "description": "Create chart from comma-separated ranges where first part is categories and second is values",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Portfolio",
+      "cells": {
+        "A1": "Stock", "A2": "AAPL", "A3": "GOOG", "A4": "MSFT",
+        "G1": "Return", "G2": 15.2, "G3": 12.8, "G4": 18.5
+      }
+    }],
+    "activeSheet": "Portfolio",
+    "selectedRange": "A1:A4,G1:G4"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "barClustered",
+        "sourceAddress": "A1:A4,G1:G4",
+        "title": "Stock Returns"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Portfolio", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Portfolio", "chartIndex": 0, "prop": "chartType", "expected": "BarClustered" }
+  ]
+}

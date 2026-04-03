@@ -1,0 +1,15 @@
+{
+  "name": "tool_call_one_round",
+  "description": "Lookup keyword triggers a single tool call round-trip",
+  "prompt": "Please lookup the data and summarize it",
+  "provider": "mock",
+  "workbook": {
+    "sheets": {
+      "Sheet1": { "A1": "Name", "B1": "Score", "A2": "Alice", "B2": 95 }
+    },
+    "activeSheet": "Sheet1",
+    "selectedRange": "Sheet1!A1:B2"
+  },
+  "expectedEventTypes": ["tool_call_required", "done"],
+  "expectedToolRounds": 1
+}

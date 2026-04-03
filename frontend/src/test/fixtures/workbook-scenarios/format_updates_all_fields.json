@@ -1,0 +1,34 @@
+{
+  "name": "format_updates_all_fields",
+  "description": "Apply all 8 format fields: fill, font color, bold, italic, numberFormat, border color/style/weight",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sheet1", "cells": { "A1": 42, "B1": 100 } }],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1:B1"
+  },
+  "mutations": [
+    {
+      "type": "format_updates",
+      "payload": [{
+        "address": "A1",
+        "fillColor": "#4472C4",
+        "fontColor": "#FFFFFF",
+        "bold": true,
+        "italic": true,
+        "numberFormat": "#,##0.00",
+        "borderColor": "#000000",
+        "borderStyle": "Continuous",
+        "borderWeight": "Thin"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "fillColor", "expected": "#4472C4" },
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "fontColor", "expected": "#FFFFFF" },
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "bold", "expected": true },
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "italic", "expected": true },
+    { "type": "border", "sheet": "Sheet1", "address": "A1", "borderIndex": "EdgeTop", "prop": "color", "expected": "#000000" },
+    { "type": "border", "sheet": "Sheet1", "address": "A1", "borderIndex": "EdgeBottom", "prop": "style", "expected": "Continuous" },
+    { "type": "border", "sheet": "Sheet1", "address": "A1", "borderIndex": "EdgeLeft", "prop": "weight", "expected": "Thin" }
+  ]
+}

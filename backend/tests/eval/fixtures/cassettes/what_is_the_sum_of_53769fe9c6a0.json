@@ -1,0 +1,26 @@
+{
+  "prompt": "What is the sum of values in column B?",
+  "result": {
+    "messages": [
+      {
+        "id": "msg-replay-1",
+        "role": "assistant",
+        "kind": "final",
+        "content": "The sum of values in column B is 30 (10 + 20).",
+        "createdAt": "2024-06-15T10:00:00Z"
+      }
+    ],
+    "cell_updates": [],
+    "format_updates": [],
+    "chart_inserts": [],
+    "pivot_table_inserts": [],
+    "telemetry": {
+      "latency_ms": 1250,
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tokens_prompt": 450,
+      "tokens_completion": 35
+    },
+    "tool_call_required": null
+  }
+}

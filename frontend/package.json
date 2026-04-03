@@ -10,6 +10,7 @@
     "lint": "eslint --ext .ts,.tsx src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "vitest run src/__tests__/e2e.simulator.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "dev:cert": "office-addin-dev-certs install --days 365 --domains localhost,127.0.0.1",

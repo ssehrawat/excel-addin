@@ -1,0 +1,36 @@
+{
+  "name": "mutation_sequence",
+  "description": "Apply cell_updates, then format_updates, then chart on the same data — verifies mutation ordering",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sheet1", "cells": {} }],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "A1", "values": [["Month", "Sales"], ["Jan", 100], ["Feb", 200]], "mode": "replace" }]
+    },
+    {
+      "type": "format_updates",
+      "payload": [{ "address": "A1:B1", "bold": true, "fillColor": "#4472C4" }]
+    },
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "columnClustered",
+        "sourceAddress": "A1:B3",
+        "title": "Sales Report"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A1", "expected": "Month" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "B3", "expected": 200 },
+    { "type": "usedRange", "sheet": "Sheet1", "expectedRows": 3, "expectedCols": 2 },
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "bold", "expected": true },
+    { "type": "format", "sheet": "Sheet1", "address": "A1", "prop": "fillColor", "expected": "#4472C4" },
+    { "type": "chartCount", "sheet": "Sheet1", "expected": 1 },
+    { "type": "chartPositionBelowRow", "sheet": "Sheet1", "chartIndex": 0, "minRow": 3 }
+  ]
+}

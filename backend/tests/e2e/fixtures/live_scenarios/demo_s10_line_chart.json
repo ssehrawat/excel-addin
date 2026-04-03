@@ -1,0 +1,15 @@
+{
+  "name": "demo_s10_line_chart",
+  "description": "Scene 10: Line chart comparing Portfolio vs S&P 500 monthly returns",
+  "prompt": "Create a line chart comparing the Portfolio returns vs S&P 500 monthly returns for the year. Title it \"Portfolio vs Benchmark\".",
+  "provider": "openai",
+  "activeSheet": "Monthly Returns",
+  "selectedRange": "Monthly Returns!A1:M6",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "mutation_types_present": ["chart_inserts"],
+    "chart_inserts_min_count": 1,
+    "chart_has_title": true
+  }
+}

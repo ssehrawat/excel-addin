@@ -1,0 +1,71 @@
+{
+  "name": "demo_full_sequence_portfolio",
+  "description": "Scenes 4+5+6 combined: Add ratings, format them, then create a column chart — tests mutation ordering on real demo data",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Portfolio",
+      "cells": {
+        "A1": "Ticker", "B1": "Company", "C1": "Sector", "D1": "Shares", "E1": "Avg Cost", "F1": "Current Price", "G1": "Market Value", "H1": "Gain/Loss", "I1": "Gain %", "J1": "Weight",
+        "A2": "AAPL", "B2": "Apple Inc.", "C2": "Technology", "G2": 28476, "I2": 0.332,
+        "A3": "MSFT", "B3": "Microsoft Corp.", "C3": "Technology", "G3": 41560, "I3": 0.484,
+        "A4": "JPM", "B4": "JPMorgan Chase", "C4": "Financials", "G4": 15716, "I4": 0.453,
+        "A5": "JNJ", "B5": "Johnson & Johnson", "C5": "Healthcare", "G5": 9318, "I5": -0.041,
+        "A6": "XOM", "B6": "Exxon Mobil", "C6": "Energy", "G6": 13290, "I6": 0.296,
+        "A7": "PG", "B7": "Procter & Gamble", "C7": "Consumer Staples", "G7": 14868, "I7": 0.116,
+        "A8": "NVDA", "B8": "NVIDIA Corp.", "C8": "Technology", "G8": 35012, "I8": 0.945,
+        "A9": "AMZN", "B9": "Amazon.com", "C9": "Consumer Disc.", "G9": 9803.75, "I9": 0.392,
+        "A10": "V", "B10": "Visa Inc.", "C10": "Financials", "G10": 19523, "I10": 0.212,
+        "A11": "UNH", "B11": "UnitedHealth Group", "C11": "Healthcare", "G11": 18378.5, "I11": 0.093,
+        "A12": "NEE", "B12": "NextEra Energy", "C12": "Utilities", "G12": 5818.25, "I12": -0.049,
+        "A13": "AMT", "B13": "American Tower", "C13": "Real Estate", "G13": 9486, "I13": 0.081
+      }
+    }],
+    "activeSheet": "Portfolio",
+    "selectedRange": "A1:J13"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{
+        "address": "K1",
+        "values": [["Rating"],["Overweight"],["Overweight"],["Overweight"],["Underweight"],["Overweight"],["Neutral"],["Overweight"],["Overweight"],["Overweight"],["Neutral"],["Underweight"],["Neutral"]],
+        "mode": "replace"
+      }]
+    },
+    {
+      "type": "format_updates",
+      "payload": [
+        { "address": "K2", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K5", "fillColor": "#FF0000", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K7", "fillColor": "#FFD966", "fontColor": "#000000", "bold": false },
+        { "address": "K8", "fillColor": "#00B050", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K12", "fillColor": "#FF0000", "fontColor": "#FFFFFF", "bold": true },
+        { "address": "K13", "fillColor": "#FFD966", "fontColor": "#000000", "bold": false }
+      ]
+    },
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "columnClustered",
+        "sourceAddress": "A1:A13,G1:G13",
+        "title": "Portfolio Holdings by Market Value",
+        "xAxisTitle": "Ticker",
+        "yAxisTitle": "Market Value ($)"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K1", "expected": "Rating" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K2", "expected": "Overweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K5", "expected": "Underweight" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "K8", "expected": "Overweight" },
+    { "type": "format", "sheet": "Portfolio", "address": "K2", "prop": "fillColor", "expected": "#00B050" },
+    { "type": "format", "sheet": "Portfolio", "address": "K5", "prop": "fillColor", "expected": "#FF0000" },
+    { "type": "format", "sheet": "Portfolio", "address": "K7", "prop": "fillColor", "expected": "#FFD966" },
+    { "type": "chartCount", "sheet": "Portfolio", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Portfolio", "chartIndex": 0, "prop": "title.text", "expected": "Portfolio Holdings by Market Value" },
+    { "type": "usedRange", "sheet": "Portfolio", "expectedRows": 13, "expectedCols": 11 },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "A2", "expected": "AAPL" },
+    { "type": "cellValue", "sheet": "Portfolio", "address": "G3", "expected": 41560 }
+  ]
+}

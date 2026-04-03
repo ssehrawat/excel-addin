@@ -1,0 +1,22 @@
+{
+  "name": "cell_update_worksheet_priority",
+  "description": "The worksheet field takes priority over a sheet prefix in the address",
+  "initialWorkbook": {
+    "sheets": [
+      { "name": "Sheet1", "cells": {} },
+      { "name": "Sheet2", "cells": {} }
+    ],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "Sheet1!A1", "values": [["Goes to Sheet2"]], "mode": "replace", "worksheet": "Sheet2" }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A1", "expected": null },
+    { "type": "cellValue", "sheet": "Sheet2", "address": "A1", "expected": "Goes to Sheet2" }
+  ]
+}

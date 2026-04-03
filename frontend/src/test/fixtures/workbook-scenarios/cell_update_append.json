@@ -1,0 +1,24 @@
+{
+  "name": "cell_update_append",
+  "description": "Append mode writes values starting at the target range and growing to fit the data",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sheet1", "cells": { "A1": "Name", "B1": "Age", "A2": "Alice", "B2": 30 } }],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1:B2"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "A3:B3", "values": [["Bob", 25], ["Carol", 28]], "mode": "append" }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A1", "expected": "Name" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A2", "expected": "Alice" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A3", "expected": "Bob" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "B3", "expected": 25 },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A4", "expected": "Carol" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "B4", "expected": 28 },
+    { "type": "usedRange", "sheet": "Sheet1", "expectedRows": 4, "expectedCols": 2 }
+  ]
+}

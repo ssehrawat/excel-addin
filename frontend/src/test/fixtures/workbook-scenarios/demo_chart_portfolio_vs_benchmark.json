@@ -1,0 +1,35 @@
+{
+  "name": "demo_chart_portfolio_vs_benchmark",
+  "description": "Scene 10: Line chart comparing Portfolio returns vs S&P 500 monthly returns",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Monthly Returns",
+      "cells": {
+        "A1": "Index", "B1": "Jan", "C1": "Feb", "D1": "Mar", "E1": "Apr", "F1": "May", "G1": "Jun", "H1": "Jul", "I1": "Aug", "J1": "Sep", "K1": "Oct", "L1": "Nov", "M1": "Dec",
+        "A2": "S&P 500", "B2": 0.016, "C2": -0.021, "D2": 0.031, "E2": 0.015, "F2": -0.008, "G2": 0.035, "H2": 0.032, "I2": -0.018, "J2": 0.012, "K2": -0.025, "L2": 0.028, "M2": 0.045,
+        "A6": "Portfolio", "B6": 0.02, "C6": -0.028, "D6": 0.038, "E6": 0.012, "F6": -0.01, "G6": 0.042, "H6": 0.038, "I6": -0.02, "J6": 0.015, "K6": -0.028, "L6": 0.032, "M6": 0.048
+      }
+    }],
+    "activeSheet": "Monthly Returns",
+    "selectedRange": "A1:M6"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "lineMarkers",
+        "sourceAddress": "A1:M6",
+        "title": "Portfolio vs Benchmark",
+        "xAxisTitle": "Month",
+        "yAxisTitle": "Return %",
+        "seriesBy": "rows"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Monthly Returns", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Monthly Returns", "chartIndex": 0, "prop": "chartType", "expected": "LineMarkers" },
+    { "type": "chartProperty", "sheet": "Monthly Returns", "chartIndex": 0, "prop": "title.text", "expected": "Portfolio vs Benchmark" },
+    { "type": "chartPositionBelowRow", "sheet": "Monthly Returns", "chartIndex": 0, "minRow": 5 }
+  ]
+}

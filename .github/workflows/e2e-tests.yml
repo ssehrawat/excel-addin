@@ -1,0 +1,62 @@
+# E2E Tests — Runs on every push and PR (replay mode, no API keys needed)
+#
+# Executes all 4 testing layers:
+#   Layer 1: Stateful Office.js Workbook Simulator (Vitest)
+#   Layer 2: Full-Pipeline Integration Tests (pytest + mock provider)
+#   Layer 3: Record-Replay LLM Parsing (pytest)
+#   Layer 4: LLM Cassette Replay (pytest, pre-recorded responses)
+
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, e2e-testing-sim]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend-e2e:
+    name: "Layer 1 — Workbook Simulator"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Run Layer 1 tests
+        run: npx vitest run src/__tests__/e2e.simulator.test.ts
+
+  backend-e2e:
+    name: "Layers 2-4 — Backend E2E"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: "Layer 2 — Pipeline Integration"
+        run: python -m pytest tests/integration/test_e2e_pipeline.py -v
+
+      - name: "Layer 3 — Record-Replay Parsing"
+        run: python -m pytest tests/eval/test_replay.py -v
+
+      - name: "Layer 4 — LLM Cassette Replay"
+        run: python -m pytest tests/e2e/test_live_llm.py -v

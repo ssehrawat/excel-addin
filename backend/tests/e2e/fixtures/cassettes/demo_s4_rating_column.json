@@ -1,0 +1,158 @@
+{
+  "scenario": "demo_s4_rating_column",
+  "prompt": "Add a column K with header \"Rating\". Rate each stock as Overweight, Neutral, or Underweight based on whether its gain % is above 20%, between 0-20%, or negative.",
+  "provider": "openai",
+  "recorded_at": "2026-04-02T23:15:28.892898+00:00",
+  "events": [
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "message_start",
+      "payload": {
+        "id": "72d17766be7945f9a614b41c8d4f3379",
+        "role": "assistant",
+        "kind": "final",
+        "content": "",
+        "createdAt": "2026-04-02T23:15:31.721640+00:00"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "72d17766be7945f9a614b41c8d4f3379",
+        "delta": "Done."
+      }
+    },
+    {
+      "type": "message_done",
+      "payload": {
+        "id": "72d17766be7945f9a614b41c8d4f3379",
+        "role": "assistant",
+        "kind": "final",
+        "content": "Done.",
+        "createdAt": "2026-04-02T23:15:31.721640+00:00"
+      }
+    },
+    {
+      "type": "cell_updates",
+      "payload": [
+        {
+          "address": "Portfolio!K1:K14",
+          "values": [
+            [
+              "Rating"
+            ],
+            [
+              "=IF(I2>20%,\"Overweight\",IF(I2>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I3>20%,\"Overweight\",IF(I3>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I4>20%,\"Overweight\",IF(I4>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I5>20%,\"Overweight\",IF(I5>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I6>20%,\"Overweight\",IF(I6>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I7>20%,\"Overweight\",IF(I7>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I8>20%,\"Overweight\",IF(I8>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I9>20%,\"Overweight\",IF(I9>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I10>20%,\"Overweight\",IF(I10>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I11>20%,\"Overweight\",IF(I11>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I12>20%,\"Overweight\",IF(I12>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              "=IF(I13>20%,\"Overweight\",IF(I13>=0%,\"Neutral\",\"Underweight\"))"
+            ],
+            [
+              ""
+            ]
+          ],
+          "mode": "replace",
+          "worksheet": null
+        }
+      ]
+    },
+    {
+      "type": "telemetry",
+      "payload": {
+        "latency_ms": 3741.5552139282227,
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "tokens_prompt": null,
+        "tokens_completion": null,
+        "raw": {
+          "openai_response": {
+            "token_usage": {
+              "completion_tokens": 346,
+              "prompt_tokens": 4091,
+              "total_tokens": 4437,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": 0,
+                "cached_tokens": 3840
+              }
+            },
+            "model_name": "gpt-5.4-mini-2026-03-17",
+            "system_fingerprint": null,
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      }
+    },
+    {
+      "type": "done"
+    }
+  ],
+  "tool_rounds": []
+}

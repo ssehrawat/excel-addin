@@ -1,0 +1,23 @@
+{
+  "name": "chart_autoposition",
+  "description": "Chart without topLeftCell auto-positions below the used range",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Data", "cells": { "A1": "X", "B1": "Y", "A2": 1, "B2": 10, "A3": 2, "B3": 20, "A4": 3, "B4": 30, "A5": 4, "B5": 40 } }],
+    "activeSheet": "Data",
+    "selectedRange": "A1:B5"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "line",
+        "sourceAddress": "A1:B5",
+        "title": "Trend"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Data", "expected": 1 },
+    { "type": "chartPositionBelowRow", "sheet": "Data", "chartIndex": 0, "minRow": 5 }
+  ]
+}

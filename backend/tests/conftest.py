@@ -70,6 +70,26 @@ def test_client(tmp_path: Path, monkeypatch) -> TestClient:
 
 
 @pytest.fixture
+def live_client(tmp_path: Path, monkeypatch) -> TestClient:
+    """Create a FastAPI ``TestClient`` with real API keys preserved.
+
+    WHY: The standard ``test_client`` strips API keys to prevent accidental
+    billing.  Layer 4 tests need real keys to hit live LLM providers.
+    MCP storage is still isolated to ``tmp_path``.
+    """
+    monkeypatch.setenv("COPILOT_MOCK_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("COPILOT_MCP_CONFIG_PATH", str(tmp_path / "mcp_servers.json"))
+    # WHY: Do NOT strip API keys — live tests need them
+    get_settings.cache_clear()
+
+    from app.main import create_app
+
+    settings = get_settings()
+    app = create_app(settings)
+    return TestClient(app)
+
+
+@pytest.fixture
 def minimal_chat_request() -> ChatRequest:
     """Return a minimal ``ChatRequest`` suitable for mock provider calls."""
     return ChatRequest(

@@ -1,0 +1,22 @@
+{
+  "name": "special_characters",
+  "description": "Sheet names with spaces and cell values with unicode/special characters",
+  "initialWorkbook": {
+    "sheets": [
+      { "name": "My Data Sheet", "cells": { "A1": "Caf\u00e9", "B1": "\u00a3100", "A2": "Stra\u00dfe", "B2": "\u20ac200" } }
+    ],
+    "activeSheet": "My Data Sheet",
+    "selectedRange": "A1:B2"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "C1", "values": [["Sum: \u00a3+\u20ac"], ["\u2713 Done"]], "mode": "replace", "worksheet": "My Data Sheet" }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "My Data Sheet", "address": "A1", "expected": "Caf\u00e9" },
+    { "type": "cellValue", "sheet": "My Data Sheet", "address": "C1", "expected": "Sum: \u00a3+\u20ac" },
+    { "type": "cellValue", "sheet": "My Data Sheet", "address": "C2", "expected": "\u2713 Done" }
+  ]
+}

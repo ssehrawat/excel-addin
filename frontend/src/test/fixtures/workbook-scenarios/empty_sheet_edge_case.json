@@ -1,0 +1,29 @@
+{
+  "name": "empty_sheet_edge_case",
+  "description": "Write to an empty sheet — usedRange starts as null, chart auto-position handles gracefully",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Empty", "cells": {} }],
+    "activeSheet": "Empty",
+    "selectedRange": "A1"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "B2", "values": [["Hello"]], "mode": "replace" }]
+    },
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "column",
+        "sourceAddress": "B2",
+        "title": "Single cell chart"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Empty", "address": "B2", "expected": "Hello" },
+    { "type": "cellValue", "sheet": "Empty", "address": "A1", "expected": null },
+    { "type": "usedRange", "sheet": "Empty", "expectedRows": 2, "expectedCols": 2 },
+    { "type": "chartCount", "sheet": "Empty", "expected": 1 }
+  ]
+}

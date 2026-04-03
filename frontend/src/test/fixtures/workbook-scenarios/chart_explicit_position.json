@@ -1,0 +1,25 @@
+{
+  "name": "chart_explicit_position",
+  "description": "Chart with explicit topLeftCell is positioned at the specified cell",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sheet1", "cells": { "A1": "X", "B1": "Y", "A2": 1, "B2": 5 } }],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1:B2"
+  },
+  "mutations": [
+    {
+      "type": "chart_inserts",
+      "payload": [{
+        "chartType": "pie",
+        "sourceAddress": "A1:B2",
+        "title": "Distribution",
+        "topLeftCell": "D1",
+        "bottomRightCell": "H10"
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "chartCount", "sheet": "Sheet1", "expected": 1 },
+    { "type": "chartProperty", "sheet": "Sheet1", "chartIndex": 0, "prop": "chartType", "expected": "Pie" }
+  ]
+}

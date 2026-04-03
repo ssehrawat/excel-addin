@@ -1,0 +1,122 @@
+{
+  "scenario": "demo_s10_line_chart",
+  "prompt": "Create a line chart comparing the Portfolio returns vs S&P 500 monthly returns for the year. Title it \"Portfolio vs Benchmark\".",
+  "provider": "openai",
+  "recorded_at": "2026-04-02T23:15:48.947573+00:00",
+  "events": [
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-1",
+        "text": "Thinking\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "active"
+      }
+    },
+    {
+      "type": "step",
+      "payload": {
+        "id": "step-2",
+        "text": "Analyzing your data\u2026",
+        "status": "done"
+      }
+    },
+    {
+      "type": "message_start",
+      "payload": {
+        "id": "7e19c866f6e8438f8f4f9d2567ae0039",
+        "role": "assistant",
+        "kind": "final",
+        "content": "",
+        "createdAt": "2026-04-02T23:15:50.498852+00:00"
+      }
+    },
+    {
+      "type": "message_delta",
+      "payload": {
+        "id": "7e19c866f6e8438f8f4f9d2567ae0039",
+        "delta": "Done."
+      }
+    },
+    {
+      "type": "message_done",
+      "payload": {
+        "id": "7e19c866f6e8438f8f4f9d2567ae0039",
+        "role": "assistant",
+        "kind": "final",
+        "content": "Done.",
+        "createdAt": "2026-04-02T23:15:50.498852+00:00"
+      }
+    },
+    {
+      "type": "chart_inserts",
+      "payload": [
+        {
+          "chartType": "LineMarkers",
+          "sourceAddress": "Monthly Returns!A1:M6",
+          "sourceWorksheet": null,
+          "destinationWorksheet": null,
+          "name": null,
+          "title": "Portfolio vs Benchmark",
+          "xAxisTitle": "Month",
+          "yAxisTitle": "Monthly Return",
+          "topLeftCell": null,
+          "bottomRightCell": null,
+          "seriesBy": "auto"
+        }
+      ]
+    },
+    {
+      "type": "telemetry",
+      "payload": {
+        "latency_ms": 2440.5806064605713,
+        "provider": "openai",
+        "model": "gpt-5.4-mini",
+        "tokens_prompt": null,
+        "tokens_completion": null,
+        "raw": {
+          "openai_response": {
+            "token_usage": {
+              "completion_tokens": 49,
+              "prompt_tokens": 3557,
+              "total_tokens": 3606,
+              "completion_tokens_details": {
+                "accepted_prediction_tokens": 0,
+                "audio_tokens": 0,
+                "reasoning_tokens": 0,
+                "rejected_prediction_tokens": 0
+              },
+              "prompt_tokens_details": {
+                "audio_tokens": 0,
+                "cached_tokens": 3328
+              }
+            },
+            "model_name": "gpt-5.4-mini-2026-03-17",
+            "system_fingerprint": null,
+            "finish_reason": "stop",
+            "logprobs": null
+          }
+        }
+      }
+    },
+    {
+      "type": "done"
+    }
+  ],
+  "tool_rounds": []
+}

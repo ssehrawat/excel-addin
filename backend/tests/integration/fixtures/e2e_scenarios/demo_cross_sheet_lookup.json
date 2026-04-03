@@ -1,0 +1,24 @@
+{
+  "name": "demo_cross_sheet_lookup",
+  "description": "Scene 8: Cross-sheet lookup — asks about Sector Allocation data from Portfolio sheet, triggers tool call",
+  "prompt": "Please lookup the sector allocation data and tell me which sectors need rebalancing",
+  "provider": "mock",
+  "workbook": {
+    "sheets": {
+      "Portfolio": {
+        "A1": "Ticker", "B1": "Company", "C1": "Sector",
+        "A2": "AAPL", "B2": "Apple Inc.", "C2": "Technology",
+        "A3": "MSFT", "B3": "Microsoft Corp.", "C3": "Technology"
+      },
+      "Sector Allocation": {
+        "A1": "Sector", "B1": "Current %", "C1": "Target %", "D1": "Difference", "E1": "Action",
+        "A2": "Technology", "B2": 0.474, "C2": 0.35, "D2": -0.124, "E2": "Reduce",
+        "A3": "Financials", "B3": 0.159, "C3": 0.2, "D3": 0.04, "E3": "Increase"
+      }
+    },
+    "activeSheet": "Portfolio",
+    "selectedRange": "Portfolio!A1:C3"
+  },
+  "expectedEventTypes": ["tool_call_required", "done"],
+  "expectedToolRounds": 1
+}

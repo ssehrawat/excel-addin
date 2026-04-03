@@ -1,0 +1,13 @@
+{
+  "name": "demo_s8_cross_sheet",
+  "description": "Scene 8: Cross-sheet analysis — ask about Sector Allocation from Portfolio sheet, likely triggers tool call",
+  "prompt": "Compare my portfolio sector weights on the \"Sector Allocation\" sheet with the targets. Which sectors need rebalancing and by how much?",
+  "provider": "openai",
+  "activeSheet": "Portfolio",
+  "selectedRange": "Portfolio!A1:J13",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "answer_mentions_any": ["Technology", "Reduce", "rebalance", "overweight", "Financials"]
+  }
+}

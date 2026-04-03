@@ -1,0 +1,45 @@
+{
+  "name": "demo_pivot_trade_log",
+  "description": "Scene 7: Pivot table from Trade Log — volume and net amount by ticker and strategy",
+  "initialWorkbook": {
+    "sheets": [{
+      "name": "Trade Log",
+      "cells": {
+        "A1": "Date", "B1": "Ticker", "C1": "Side", "D1": "Quantity", "E1": "Price", "F1": "Total", "G1": "Commission", "H1": "Net Amount", "I1": "Strategy",
+        "A2": "2025-01-06", "B2": "MSFT", "C2": "BUY", "D2": 25, "E2": 399.54, "F2": 9988.5, "G2": 4.99, "H2": 9983.51, "I2": "Value",
+        "A3": "2025-01-07", "B3": "MSFT", "C3": "SELL", "D3": 10, "E3": 390.72, "F3": 3907.2, "G3": 1.95, "H3": -3909.15, "I3": "Value",
+        "A4": "2025-01-08", "B4": "AAPL", "C4": "BUY", "D4": 100, "E4": 183.51, "F4": 18351, "G4": 9.18, "H4": 18341.82, "I4": "Earnings Play",
+        "A5": "2025-01-10", "B5": "AAPL", "C5": "BUY", "D5": 50, "E5": 182.04, "F5": 9102, "G5": 4.55, "H5": 9097.45, "I5": "Value",
+        "A6": "2025-01-11", "B6": "V", "C6": "BUY", "D6": 10, "E6": 271.7, "F6": 2717, "G6": 1.36, "H6": 2715.64, "I6": "Mean Reversion",
+        "A7": "2025-01-13", "B7": "AMZN", "C7": "BUY", "D7": 50, "E7": 175.63, "F7": 8781.5, "G7": 4.39, "H7": 8777.11, "I7": "Earnings Play",
+        "A8": "2025-01-14", "B8": "AMZN", "C8": "SELL", "D8": 100, "E8": 169.62, "F8": 16962, "G8": 8.48, "H8": -16970.48, "I8": "Momentum",
+        "A9": "2025-01-15", "B9": "NVDA", "C9": "SELL", "D9": 10, "E9": 890.56, "F9": 8905.6, "G9": 4.45, "H9": -8910.05, "I9": "Momentum",
+        "A10": "2025-01-18", "B10": "AMZN", "C10": "SELL", "D10": 25, "E10": 169.1, "F10": 4227.5, "G10": 2.11, "H10": -4229.61, "I10": "Mean Reversion"
+      }
+    }],
+    "activeSheet": "Trade Log",
+    "selectedRange": "A1:I10"
+  },
+  "mutations": [
+    {
+      "type": "pivot_table_inserts",
+      "payload": [{
+        "name": "TradeAnalysis",
+        "sourceAddress": "A1:I10",
+        "destinationWorksheet": "Pivot Analysis",
+        "destinationAddress": "A1",
+        "rows": ["Ticker"],
+        "columns": ["Strategy"],
+        "values": [
+          { "name": "Quantity", "summarizeBy": "sum" },
+          { "name": "Net Amount", "summarizeBy": "sum" }
+        ]
+      }]
+    }
+  ],
+  "assertions": [
+    { "type": "sheetExists", "sheet": "Pivot Analysis", "expected": true },
+    { "type": "pivotCount", "sheet": "Pivot Analysis", "expected": 1 },
+    { "type": "pivotProperty", "sheet": "Pivot Analysis", "pivotIndex": 0, "prop": "name", "expected": "TradeAnalysis" }
+  ]
+}

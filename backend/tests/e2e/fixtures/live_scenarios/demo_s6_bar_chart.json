@@ -1,0 +1,15 @@
+{
+  "name": "demo_s6_bar_chart",
+  "description": "Scene 6: Column chart of market value by ticker from non-contiguous selection",
+  "prompt": "Create a column chart showing market value by ticker. Title it \"Portfolio Holdings by Market Value\". Sort from highest to lowest.",
+  "provider": "openai",
+  "activeSheet": "Portfolio",
+  "selectedRange": "Portfolio!A1:A13,Portfolio!G1:G13",
+  "assertions": {
+    "no_errors": true,
+    "has_answer": true,
+    "mutation_types_present": ["chart_inserts"],
+    "chart_inserts_min_count": 1,
+    "chart_has_title": true
+  }
+}

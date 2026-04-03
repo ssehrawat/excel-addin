@@ -1,0 +1,23 @@
+{
+  "name": "cell_update_replace",
+  "description": "Basic replace mode writes values starting at the top-left cell of the target range",
+  "initialWorkbook": {
+    "sheets": [{ "name": "Sheet1", "cells": { "A1": "Name", "B1": "Age", "A2": "Alice", "B2": 30 } }],
+    "activeSheet": "Sheet1",
+    "selectedRange": "A1:B2"
+  },
+  "mutations": [
+    {
+      "type": "cell_updates",
+      "payload": [{ "address": "A1", "values": [["Name", "Age", "Score"], ["Alice", 30, 95], ["Bob", 25, 87]], "mode": "replace" }]
+    }
+  ],
+  "assertions": [
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A1", "expected": "Name" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "C1", "expected": "Score" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "C2", "expected": 95 },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "A3", "expected": "Bob" },
+    { "type": "cellValue", "sheet": "Sheet1", "address": "C3", "expected": 87 },
+    { "type": "usedRange", "sheet": "Sheet1", "expectedRows": 3, "expectedCols": 3 }
+  ]
+}
